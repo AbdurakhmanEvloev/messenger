@@ -1,9 +1,17 @@
+// src/app/_layout.tsx — навигация приложения (полный файл)
 import { Stack } from 'expo-router';
-import { Pressable, Text, View } from 'react-native';
+import { Pressable, Text } from 'react-native';
 
 export default function Layout() {
   return (
-    <Stack>
+    <Stack
+      screenOptions={{
+        headerShadowVisible: false,
+        headerStyle: { backgroundColor: '#ffffff' },
+        headerTitleStyle: { fontWeight: '700' },
+        headerTintColor: '#2563eb',
+      }}
+    >
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen
         name="chats"
@@ -11,14 +19,9 @@ export default function Layout() {
           title: 'Чаты',
           headerBackVisible: false,
           headerRight: () => (
-            <View style={{ flexDirection: 'row', gap: 16 }}>
-              <Pressable onPress={() => navigation.navigate('users')}>
-                <Text style={{ color: '#2563eb', fontSize: 16 }}>Новый</Text>
-              </Pressable>
-              <Pressable onPress={() => navigation.navigate('profile')}>
-                <Text style={{ color: '#2563eb', fontSize: 16 }}>Профиль</Text>
-              </Pressable>
-            </View>
+            <Pressable onPress={() => navigation.navigate('profile')} hitSlop={10}>
+              <Text style={{ color: '#2563eb', fontSize: 16 }}>Профиль</Text>
+            </Pressable>
           ),
         })}
       />

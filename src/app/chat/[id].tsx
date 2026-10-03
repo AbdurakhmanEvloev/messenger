@@ -37,6 +37,12 @@ type Message = {
   created_at: string;
 };
 
+// Отметить чат прочитанным: от этого зависит счётчик непрочитанных в списке чатов
+async function markChatRead(chatId: string) {
+  const { error } = await supabase.rpc('mark_chat_read', { p_chat_id: chatId });
+  if (error) console.log('[READ] не удалось отметить прочитанным:', error.message);
+}
+
 // ---------- Пузырь с фото ----------
 function ImageBubble({ path }: { path: string }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -181,7 +187,7 @@ function VoiceBubble({ path, mine }: { path: string; mine: boolean }) {
 
 // ---------- Экран чата ----------
 export default function ChatScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const chatId = String(id);
   const insets = useSafeAreaInsets(); // отступ снизу, чтобы панель не пряталась под системной кнопкой
 
@@ -211,6 +217,7 @@ export default function ChatScreen() {
         if (!active) return;
         if (error) Alert.alert('Ошибка', error.message);
         else setMessages((data ?? []) as Message[]);
+        markChatRead(chatId);
       });
 
     const channel = supabase
@@ -226,12 +233,14 @@ export default function ChatScreen() {
         (payload) => {
           const m = payload.new as Message;
           setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [m, ...prev]));
+          markChatRead(chatId);
         }
       )
       .subscribe();
 
     return () => {
       active = false;
+      markChatRead(chatId);
       supabase.removeChannel(channel);
     };
   }, [chatId]);
@@ -378,7 +387,7 @@ export default function ChatScreen() {
       behavior="padding"
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <Stack.Screen options={{ title: 'Чат' }} />
+      <Stack.Screen options={{ title: name ? String(name) : 'Чат' }} />
 
       <FlatList
         data={messages}
