@@ -43,6 +43,29 @@ async function markChatRead(chatId: string) {
   if (error) console.log('[READ] не удалось отметить прочитанным:', error.message);
 }
 
+// ---------- Даты и время ----------
+const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+
+function dayKey(iso: string) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+// «Сегодня», «Вчера» или «3 октября» (с годом, если год другой)
+function dayLabel(iso: string) {
+  const d = new Date(iso);
+  const now = new Date();
+  if (dayKey(iso) === dayKey(now.toISOString())) return 'Сегодня';
+  if (dayKey(iso) === dayKey(new Date(now.getTime() - 86400000).toISOString())) return 'Вчера';
+  const base = `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+  return d.getFullYear() === now.getFullYear() ? base : `${base} ${d.getFullYear()}`;
+}
+
+function timeOf(iso: string) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 // ---------- Пузырь с фото ----------
 function ImageBubble({ path }: { path: string }) {
   const [url, setUrl] = useState<string | null>(null);
@@ -364,18 +387,48 @@ export default function ChatScreen() {
     }
   };
 
-  const renderItem = ({ item }: { item: Message }) => {
+  const renderItem = ({ item, index }: { item: Message; index: number }) => {
     const mine = item.sender_id === userId;
+    // Список перевёрнут: индекс 0 — самое новое сообщение
+    const older = messages[index + 1];
+    const newer = messages[index - 1];
+    const showDate = !older || dayKey(older.created_at) !== dayKey(item.created_at);
+    // Подряд идущие сообщения одного автора склеиваем в «серию»: хвостик только у последнего
+    const groupedWithNewer =
+      !!newer && newer.sender_id === item.sender_id && dayKey(newer.created_at) === dayKey(item.created_at);
+    const isImage = !!item.image_path;
+
     return (
-      <View style={[styles.row, mine ? styles.rowMine : styles.rowTheirs]}>
-        <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
-          {item.image_path ? (
-            <ImageBubble path={item.image_path} />
-          ) : item.audio_path ? (
-            <VoiceBubble path={item.audio_path} mine={mine} />
-          ) : (
-            <Text style={[styles.msgText, mine && styles.msgTextMine]}>{item.text}</Text>
-          )}
+      <View>
+        {showDate && (
+          <View style={styles.dateChip}>
+            <Text style={styles.dateChipText}>{dayLabel(item.created_at)}</Text>
+          </View>
+        )}
+        <View
+          style={[
+            styles.row,
+            mine ? styles.rowMine : styles.rowTheirs,
+            !groupedWithNewer && styles.rowGroupEnd,
+          ]}
+        >
+          <View
+            style={[
+              styles.bubble,
+              mine ? styles.bubbleMine : styles.bubbleTheirs,
+              isImage && styles.bubbleImage,
+              !groupedWithNewer && (mine ? styles.tailMine : styles.tailTheirs),
+            ]}
+          >
+            {item.image_path ? (
+              <ImageBubble path={item.image_path} />
+            ) : item.audio_path ? (
+              <VoiceBubble path={item.audio_path} mine={mine} />
+            ) : (
+              <Text style={[styles.msgText, mine && styles.msgTextMine]}>{item.text}</Text>
+            )}
+            <Text style={[styles.msgTime, mine && styles.msgTimeMine]}>{timeOf(item.created_at)}</Text>
+          </View>
         </View>
       </View>
     );
@@ -427,16 +480,31 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: '#e9eef5' },
   list: { padding: 12 },
-  row: { flexDirection: 'row', marginVertical: 3 },
+  row: { flexDirection: 'row', marginVertical: 1 },
+  rowGroupEnd: { marginBottom: 6 },
   rowMine: { justifyContent: 'flex-end' },
   rowTheirs: { justifyContent: 'flex-start' },
   bubble: { maxWidth: '80%', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16 },
-  bubbleMine: { backgroundColor: '#2f80ed', borderBottomRightRadius: 4 },
-  bubbleTheirs: { backgroundColor: '#eceff1', borderBottomLeftRadius: 4 },
+  bubbleMine: { backgroundColor: '#2f80ed' },
+  bubbleTheirs: { backgroundColor: '#ffffff' },
+  tailMine: { borderBottomRightRadius: 4 },
+  tailTheirs: { borderBottomLeftRadius: 4 },
+  bubbleImage: { padding: 4 },
   msgText: { fontSize: 16, color: '#111' },
   msgTextMine: { color: '#fff' },
+  msgTime: { alignSelf: 'flex-end', fontSize: 11, color: '#8a8f98', marginTop: 2, marginRight: 2 },
+  msgTimeMine: { color: 'rgba(255,255,255,0.75)' },
+  dateChip: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0,0,0,0.28)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginVertical: 10,
+  },
+  dateChipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
