@@ -7,12 +7,15 @@ import {
     useAudioRecorder,
 } from 'expo-audio';
 import { File } from 'expo-file-system';
+import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
     Alert,
     FlatList,
+    Image,
     KeyboardAvoidingView,
+    Modal,
     Platform,
     Pressable,
     StyleSheet,
@@ -30,8 +33,43 @@ type Message = {
   sender_id: string;
   text: string | null;
   audio_path: string | null;
+  image_path: string | null;
   created_at: string;
 };
+
+// ---------- Пузырь с фото ----------
+function ImageBubble({ path }: { path: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    supabase.storage
+      .from('photos')
+      .createSignedUrl(path, 3600)
+      .then(({ data }) => {
+        if (active && data) setUrl(data.signedUrl);
+      });
+    return () => {
+      active = false;
+    };
+  }, [path]);
+
+  if (!url) return <View style={styles.photoPlaceholder} />;
+
+  return (
+    <>
+      <Pressable onPress={() => setOpen(true)}>
+        <Image source={{ uri: url }} style={styles.photo} resizeMode="cover" />
+      </Pressable>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <Pressable style={styles.viewer} onPress={() => setOpen(false)}>
+          <Image source={{ uri: url }} style={styles.viewerImage} resizeMode="contain" />
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
 
 // ---------- Пузырь голосового сообщения ----------
 const BAR_HEIGHTS = [6, 10, 16, 8, 20, 12, 18, 7, 14, 22, 9, 15, 19, 8, 12, 17, 6, 13, 21, 10, 16, 8, 12, 6];
@@ -273,12 +311,58 @@ export default function ChatScreen() {
     }
   };
 
+  // Выбрать фото из галереи и отправить
+  const pickAndSendPhoto = async () => {
+    if (!userId || sending) return;
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.7,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+
+      setSending(true);
+      const asset = result.assets[0];
+      const mime = asset.mimeType ?? 'image/jpeg';
+      const ext = mime.includes('png') ? 'png' : 'jpg';
+      console.log('[PHOTO] 1. выбрано:', asset.uri, mime);
+
+      const base64 = await new File(asset.uri).base64();
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      console.log('[PHOTO] 2. размер, байт:', bytes.length);
+      if (bytes.length < 500) throw new Error('Файл фото пустой');
+
+      // Папка = id пользователя: так требует правило безопасности бакета photos
+      const path = `${userId}/${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from('photos')
+        .upload(path, bytes.buffer, { contentType: mime });
+      console.log('[PHOTO] 3. загрузка, ошибка:', upErr?.message ?? 'нет');
+      if (upErr) throw upErr;
+
+      const { error: insErr } = await supabase
+        .from('messages')
+        .insert({ chat_id: chatId, sender_id: userId, image_path: path });
+      console.log('[PHOTO] 4. запись в messages, ошибка:', insErr?.message ?? 'нет');
+      if (insErr) throw insErr;
+    } catch (e: any) {
+      console.log('[PHOTO] ОШИБКА:', e);
+      Alert.alert('Не удалось отправить фото', String(e?.message ?? e));
+    } finally {
+      setSending(false);
+    }
+  };
+
   const renderItem = ({ item }: { item: Message }) => {
     const mine = item.sender_id === userId;
     return (
       <View style={[styles.row, mine ? styles.rowMine : styles.rowTheirs]}>
         <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleTheirs]}>
-          {item.audio_path ? (
+          {item.image_path ? (
+            <ImageBubble path={item.image_path} />
+          ) : item.audio_path ? (
             <VoiceBubble path={item.audio_path} mine={mine} />
           ) : (
             <Text style={[styles.msgText, mine && styles.msgTextMine]}>{item.text}</Text>
@@ -305,6 +389,9 @@ export default function ChatScreen() {
       />
 
       <View style={[styles.inputBar, { paddingBottom: 8 + insets.bottom }]}>
+        <Pressable style={styles.attachBtn} onPress={pickAndSendPhoto} disabled={sending}>
+          <Text style={styles.attachText}>📎</Text>
+        </Pressable>
         <TextInput
           style={styles.input}
           value={text}
@@ -386,4 +473,16 @@ const styles = StyleSheet.create({
   playIconTheirs: { color: '#fff' },
   wave: { flexDirection: 'row', alignItems: 'center', height: 24, flex: 1 },
   voiceTime: { fontSize: 12, color: '#555', marginLeft: 8, minWidth: 32 },
+  attachBtn: {
+    width: 40,
+    height: 40,
+    marginRight: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachText: { fontSize: 22 },
+  photo: { width: 220, height: 220, borderRadius: 12 },
+  photoPlaceholder: { width: 220, height: 220, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.08)' },
+  viewer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center' },
+  viewerImage: { width: '100%', height: '100%' },
 });
