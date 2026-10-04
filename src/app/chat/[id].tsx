@@ -1,4 +1,4 @@
-// src/app/chat/[id].tsx — экран чата с текстом и голосовыми (полный файл)
+// src/app/chat/[id].tsx — экран чата с текстом, голосовыми, фото и профилем собеседника (полный файл)
 import {
   AudioModule,
   RecordingPresets,
@@ -8,7 +8,7 @@ import {
 } from 'expo-audio';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -24,6 +24,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Avatar from '../../components/Avatar';
 // Путь к клиенту Supabase: если у вас файл лежит в другом месте, поправьте эту строку
 import { supabase } from '../../lib/supabase';
 
@@ -213,6 +214,7 @@ function VoiceBubble({ path, mine, onLongPress }: { path: string; mine: boolean;
 export default function ChatScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const chatId = String(id);
+  const router = useRouter();
   const insets = useSafeAreaInsets(); // отступ снизу, чтобы панель не пряталась под системной кнопкой
 
   const [userId, setUserId] = useState<string | null>(null);
@@ -222,6 +224,7 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [typingKind, setTypingKind] = useState<null | 'text' | 'voice'>(null); // собеседник печатает / записывает
   const [otherReadAt, setOtherReadAt] = useState<string | null>(null); // когда собеседник последний раз читал чат
+  const [peerAvatar, setPeerAvatar] = useState<string | null>(null); // аватарка собеседника
 
   const userIdRef = useRef<string | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -229,6 +232,21 @@ export default function ChatScreen() {
   const lastTypingSent = useRef(0);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
+  // Аватарка собеседника для шапки
+  useEffect(() => {
+    (async () => {
+      const { data: u } = await supabase.auth.getUser();
+      const { data } = await supabase
+        .from('chat_members')
+        .select('profiles(avatar_path)')
+        .eq('chat_id', chatId)
+        .neq('user_id', u.user?.id ?? '')
+        .limit(1)
+        .single();
+      setPeerAvatar((data as any)?.profiles?.avatar_path ?? null);
+    })();
+  }, [chatId]);
 
   // Узнаём, когда собеседник последний раз открывал чат (для галочек «прочитано»)
   const fetchOtherRead = useCallback(async () => {
@@ -263,9 +281,9 @@ export default function ChatScreen() {
   // Кто я
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      const id = data.user?.id ?? null;
-      userIdRef.current = id;
-      setUserId(id);
+      const uid = data.user?.id ?? null;
+      userIdRef.current = uid;
+      setUserId(uid);
       fetchOtherRead();
     });
   }, [fetchOtherRead]);
@@ -552,16 +570,22 @@ export default function ChatScreen() {
         options={{
           title: name ? String(name) : 'Чат',
           headerTitle: () => (
-            <View>
-              <Text style={styles.headerName} numberOfLines={1}>
-                {name ? String(name) : 'Чат'}
-              </Text>
-              {typingKind && (
-                <Text style={styles.headerTyping}>
-                  {typingKind === 'voice' ? 'записывает голосовое…' : 'печатает…'}
+            <Pressable
+              style={styles.headerRow}
+              onPress={() => router.push(`/user/${chatId}`)}
+            >
+              <Avatar name={name ? String(name) : '?'} path={peerAvatar} size={36} />
+              <View>
+                <Text style={styles.headerName} numberOfLines={1}>
+                  {name ? String(name) : 'Чат'}
                 </Text>
-              )}
-            </View>
+                {typingKind && (
+                  <Text style={styles.headerTyping}>
+                    {typingKind === 'voice' ? 'записывает голосовое…' : 'печатает…'}
+                  </Text>
+                )}
+              </View>
+            </Pressable>
           ),
         }}
       />
@@ -622,6 +646,7 @@ const styles = StyleSheet.create({
   msgTime: { alignSelf: 'flex-end', fontSize: 11, color: '#8a8f98', marginTop: 2, marginRight: 2 },
   msgTimeMine: { color: 'rgba(255,255,255,0.75)' },
   tickRead: { color: '#9be7ff', fontWeight: '700' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerName: { fontSize: 17, fontWeight: '700', color: '#111' },
   headerTyping: { fontSize: 12, color: '#2563eb' },
   dateChip: {

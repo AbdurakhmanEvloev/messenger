@@ -1,17 +1,9 @@
-// src/app/_layout.tsx — навигация приложения (полный файл)
 import { Stack } from 'expo-router';
-import { Pressable, Text } from 'react-native';
+import { Alert, Pressable, Text, View } from 'react-native';
 
 export default function Layout() {
   return (
-    <Stack
-      screenOptions={{
-        headerShadowVisible: false,
-        headerStyle: { backgroundColor: '#ffffff' },
-        headerTitleStyle: { fontWeight: '700' },
-        headerTintColor: '#2563eb',
-      }}
-    >
+    <Stack>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen
         name="chats"
@@ -19,14 +11,32 @@ export default function Layout() {
           title: 'Чаты',
           headerBackVisible: false,
           headerRight: () => (
-            <Pressable onPress={() => navigation.navigate('profile')} hitSlop={10}>
-              <Text style={{ color: '#2563eb', fontSize: 16 }}>Профиль</Text>
-            </Pressable>
+            <View style={{ flexDirection: 'row', gap: 16 }}>
+              <Pressable onPress={() => navigation.navigate('users')}>
+                <Text style={{ color: '#2563eb', fontSize: 16 }}>Новый</Text>
+              </Pressable>
+              <Pressable onPress={() => navigation.navigate('profile')}>
+                <Text style={{ color: '#2563eb', fontSize: 16 }}>Профиль</Text>
+              </Pressable>
+            </View>
           ),
         })}
       />
       <Stack.Screen name="users" options={{ title: 'Новый чат' }} />
-      <Stack.Screen name="chat/[id]" options={{ title: 'Чат' }} />
+      <Stack.Screen
+        name="chat/[id]"
+        options={{
+          title: 'Чат',
+          headerRight: () => (
+            <Pressable
+              hitSlop={12}
+              onPress={() => Alert.alert('Меню', 'Здесь скоро будут функции')}
+            >
+              <Text style={{ fontSize: 26, color: '#2563eb', lineHeight: 28 }}>⋯</Text>
+            </Pressable>
+          ),
+        }}
+      />
       <Stack.Screen name="profile" options={{ title: 'Профиль' }} />
     </Stack>
   );

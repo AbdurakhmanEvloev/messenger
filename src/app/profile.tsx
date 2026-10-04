@@ -1,4 +1,4 @@
-// src/app/profile.tsx — профиль: аватарка, имя, выход (полный файл)
+// src/app/profile.tsx — профиль: аватарка, имя, о себе, выход (полный файл)
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
@@ -10,6 +10,7 @@ import { supabase } from '../lib/supabase';
 export default function Profile() {
   const router = useRouter();
   const [username, setUsername] = useState('');
+  const [bio, setBio] = useState('');
   const [userId, setUserId] = useState('');
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -21,12 +22,13 @@ export default function Profile() {
       setUserId(data.user.id);
       const { data: p } = await supabase
         .from('profiles')
-        .select('username, avatar_path')
+        .select('username, avatar_path, bio')
         .eq('id', data.user.id)
         .single();
       if (p) {
         setUsername(p.username ?? '');
         setAvatarPath(p.avatar_path ?? null);
+        setBio(p.bio ?? '');
       }
     })();
   }, []);
@@ -37,8 +39,11 @@ export default function Profile() {
       Alert.alert('Введите имя', 'Имя не может быть пустым');
       return;
     }
-    const { error } = await supabase.from('profiles').update({ username: name }).eq('id', userId);
-    Alert.alert(error ? 'Ошибка' : 'Сохранено', error?.message ?? 'Имя обновлено');
+    const { error } = await supabase
+      .from('profiles')
+      .update({ username: name, bio: bio.trim() })
+      .eq('id', userId);
+    Alert.alert(error ? 'Ошибка' : 'Сохранено', error?.message ?? 'Профиль обновлён');
   };
 
   // Выбрать фото, обрезать до квадрата и загрузить как аватарку
@@ -124,6 +129,19 @@ export default function Profile() {
           placeholderTextColor="#9aa0a6"
           maxLength={40}
         />
+
+        <Text style={styles.label}>О себе (чем занимаетесь)</Text>
+        <TextInput
+          style={[styles.input, styles.bio]}
+          value={bio}
+          onChangeText={setBio}
+          placeholder="Например: студент, делаю мессенджер"
+          placeholderTextColor="#9aa0a6"
+          multiline
+          maxLength={200}
+        />
+        <Text style={styles.counter}>{bio.length}/200</Text>
+
         <Pressable style={styles.button} onPress={save}>
           <Text style={styles.buttonText}>Сохранить</Text>
         </Pressable>
@@ -163,6 +181,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     color: '#111',
   },
+  bio: { minHeight: 100, textAlignVertical: 'top', marginBottom: 4 },
+  counter: { textAlign: 'right', color: '#9aa0a6', fontSize: 12, marginBottom: 16 },
   button: { backgroundColor: '#2563eb', padding: 14, borderRadius: 10, alignItems: 'center' },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   logoutBox: { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginTop: 20 },

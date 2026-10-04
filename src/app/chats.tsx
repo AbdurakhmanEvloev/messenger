@@ -1,7 +1,7 @@
-// src/app/chats.tsx — список чатов (полный файл)
-import { useFocusEffect, useRouter } from 'expo-router';
+// src/app/chats.tsx — список чатов (поиск + три точки в шапке)
+import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import { supabase } from '../lib/supabase';
@@ -48,6 +48,7 @@ export default function Chats() {
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
     const { data: u } = await supabase.auth.getUser();
@@ -83,6 +84,16 @@ export default function Chats() {
     await load();
     setRefreshing(false);
   };
+
+  // Поиск: по имени собеседника и по тексту последнего сообщения
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? chats.filter(
+        (c) =>
+          (c.username ?? '').toLowerCase().includes(q) ||
+          (c.last_text ?? '').toLowerCase().includes(q)
+      )
+    : chats;
 
   const renderItem = ({ item }: { item: ChatRow }) => {
     const name = item.username || 'Без имени';
@@ -124,20 +135,56 @@ export default function Chats() {
 
   return (
     <View style={styles.container}>
+            <Stack.Screen
+        options={{
+          headerRight: () => (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+              <Pressable hitSlop={10} onPress={() => router.push('/profile')}>
+                <Text style={{ color: '#2563eb', fontSize: 16 }}>Профиль</Text>
+              </Pressable>
+              <Pressable
+                hitSlop={12}
+                onPress={() => Alert.alert('Меню', 'Здесь скоро будут функции')}
+              >
+                <Text style={{ fontSize: 26, color: '#2563eb', lineHeight: 28 }}>⋯</Text>
+              </Pressable>
+            </View>
+          ),
+        }}
+      />
+
+      <TextInput
+        style={styles.search}
+        placeholder="Поиск"
+        placeholderTextColor="#8a8f98"
+        value={query}
+        onChangeText={setQuery}
+        autoCapitalize="none"
+        autoCorrect={false}
+        clearButtonMode="while-editing"
+      />
+
       <FlatList
-        data={chats}
+        data={shown}
         keyExtractor={(item) => item.chat_id}
         renderItem={renderItem}
+        keyboardShouldPersistTaps="handled"
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingBottom: 100 + insets.bottom }}
         ListEmptyComponent={
           loaded ? (
             <View style={styles.emptyBox}>
-              <Text style={styles.emptyIcon}>💬</Text>
-              <Text style={styles.emptyTitle}>{error ? 'Не удалось загрузить чаты' : 'Чатов пока нет'}</Text>
+              <Text style={styles.emptyIcon}>{q ? '🔍' : '💬'}</Text>
+              <Text style={styles.emptyTitle}>
+                {error ? 'Не удалось загрузить чаты' : q ? 'Ничего не найдено' : 'Чатов пока нет'}
+              </Text>
               <Text style={styles.emptyText}>
-                {error ? error : 'Нажмите на синюю кнопку внизу, чтобы начать переписку.'}
+                {error
+                  ? error
+                  : q
+                  ? 'Попробуйте другое имя или слово.'
+                  : 'Нажмите на синюю кнопку внизу, чтобы начать переписку.'}
               </Text>
             </View>
           ) : null
@@ -156,6 +203,17 @@ export default function Chats() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
+  search: {
+    marginHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 4,
+    backgroundColor: '#f2f4f7',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 16,
+    color: '#111',
+  },
   row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10 },
   rowPressed: { backgroundColor: '#f2f4f7' },
   rowBody: { flex: 1, marginLeft: 14 },
