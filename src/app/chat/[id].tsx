@@ -1,27 +1,27 @@
 // src/app/chat/[id].tsx — экран чата с текстом и голосовыми (полный файл)
 import {
-    AudioModule,
-    RecordingPresets,
-    createAudioPlayer,
-    setAudioModeAsync,
-    useAudioRecorder,
+  AudioModule,
+  RecordingPresets,
+  createAudioPlayer,
+  setAudioModeAsync,
+  useAudioRecorder,
 } from 'expo-audio';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Alert,
-    FlatList,
-    Image,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  Alert,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // Путь к клиенту Supabase: если у вас файл лежит в другом месте, поправьте эту строку
@@ -67,7 +67,7 @@ function timeOf(iso: string) {
 }
 
 // ---------- Пузырь с фото ----------
-function ImageBubble({ path }: { path: string }) {
+function ImageBubble({ path, onLongPress }: { path: string; onLongPress?: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -88,7 +88,7 @@ function ImageBubble({ path }: { path: string }) {
 
   return (
     <>
-      <Pressable onPress={() => setOpen(true)}>
+      <Pressable onPress={() => setOpen(true)} onLongPress={onLongPress}>
         <Image source={{ uri: url }} style={styles.photo} resizeMode="cover" />
       </Pressable>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
@@ -108,7 +108,7 @@ function formatTime(sec: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
-function VoiceBubble({ path, mine }: { path: string; mine: boolean }) {
+function VoiceBubble({ path, mine, onLongPress }: { path: string; mine: boolean; onLongPress?: () => void }) {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
   const [position, setPosition] = useState(0);
@@ -179,6 +179,7 @@ function VoiceBubble({ path, mine }: { path: string; mine: boolean }) {
     <View style={styles.voiceRow}>
       <Pressable
         onPress={toggle}
+        onLongPress={onLongPress}
         style={[styles.playBtn, mine ? styles.playBtnMine : styles.playBtnTheirs]}
       >
         <Text style={[styles.playIcon, mine ? styles.playIconMine : styles.playIconTheirs]}>
@@ -219,13 +220,67 @@ export default function ChatScreen() {
   const [text, setText] = useState('');
   const [recording, setRecording] = useState(false);
   const [sending, setSending] = useState(false);
+  const [typingKind, setTypingKind] = useState<null | 'text' | 'voice'>(null); // собеседник печатает / записывает
+  const [otherReadAt, setOtherReadAt] = useState<string | null>(null); // когда собеседник последний раз читал чат
+
+  const userIdRef = useRef<string | null>(null);
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastTypingSent = useRef(0);
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
+  // Узнаём, когда собеседник последний раз открывал чат (для галочек «прочитано»)
+  const fetchOtherRead = useCallback(async () => {
+    const me = userIdRef.current;
+    if (!me) return;
+    const { data } = await supabase.from('chat_members').select('user_id, last_read_at').eq('chat_id', chatId);
+    const other = data?.find((r: any) => r.user_id !== me);
+    if (other) setOtherReadAt(other.last_read_at);
+  }, [chatId]);
+
+  // Отметить чат прочитанным и сообщить об этом собеседнику, если он сейчас в чате
+  const markRead = useCallback(async () => {
+    const { error } = await supabase.rpc('mark_chat_read', { p_chat_id: chatId });
+    if (error) {
+      console.log('[READ] не удалось отметить прочитанным:', error.message);
+      return;
+    }
+    if (String(channelRef.current?.state) === 'joined') {
+      channelRef.current?.send({ type: 'broadcast', event: 'read', payload: {} });
+    }
+  }, [chatId]);
+
+  // Сообщить собеседнику «печатаю» (не чаще раза в 2 секунды)
+  const sendTyping = useCallback((kind: 'text' | 'voice') => {
+    const now = Date.now();
+    if (now - lastTypingSent.current < 2000) return;
+    lastTypingSent.current = now;
+    if (String(channelRef.current?.state) !== 'joined') return;
+    channelRef.current?.send({ type: 'broadcast', event: 'typing', payload: { kind } });
+  }, []);
+
   // Кто я
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
-  }, []);
+    supabase.auth.getUser().then(({ data }) => {
+      const id = data.user?.id ?? null;
+      userIdRef.current = id;
+      setUserId(id);
+      fetchOtherRead();
+    });
+  }, [fetchOtherRead]);
+
+  // Пока идёт запись голосового, собеседник видит «записывает голосовое…»
+  useEffect(() => {
+    if (!recording) return;
+    lastTypingSent.current = 0;
+    sendTyping('voice');
+    const t = setInterval(() => {
+      lastTypingSent.current = 0;
+      sendTyping('voice');
+    }, 2500);
+    return () => clearInterval(t);
+  }, [recording, sendTyping]);
 
   // Загрузка истории + realtime
   useEffect(() => {
@@ -240,7 +295,7 @@ export default function ChatScreen() {
         if (!active) return;
         if (error) Alert.alert('Ошибка', error.message);
         else setMessages((data ?? []) as Message[]);
-        markChatRead(chatId);
+        markRead();
       });
 
     const channel = supabase
@@ -256,17 +311,44 @@ export default function ChatScreen() {
         (payload) => {
           const m = payload.new as Message;
           setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [m, ...prev]));
-          markChatRead(chatId);
+          setTypingKind(null);
+          markRead();
         }
       )
-      .subscribe();
+      // Сообщение удалили: убираем его из списка (у удаления нет фильтра по чату, но id уникален)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, (payload) => {
+        const deletedId = (payload.old as any)?.id;
+        if (deletedId) setMessages((prev) => prev.filter((x) => x.id !== deletedId));
+      })
+      // Собеседник печатает
+      .on('broadcast', { event: 'typing' }, ({ payload }) => {
+        setTypingKind(payload?.kind === 'voice' ? 'voice' : 'text');
+        if (typingTimer.current) clearTimeout(typingTimer.current);
+        typingTimer.current = setTimeout(() => setTypingKind(null), 3500);
+      })
+      // Собеседник прочитал чат
+      .on('broadcast', { event: 'read' }, () => {
+        fetchOtherRead();
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') markRead();
+      });
+    channelRef.current = channel;
 
     return () => {
       active = false;
       markChatRead(chatId);
+      if (typingTimer.current) clearTimeout(typingTimer.current);
+      channelRef.current = null;
       supabase.removeChannel(channel);
     };
-  }, [chatId]);
+  }, [chatId, markRead, fetchOtherRead]);
+
+  // Ввод текста: заодно говорим собеседнику «печатает…»
+  const onChangeText = (value: string) => {
+    setText(value);
+    if (value.trim()) sendTyping('text');
+  };
 
   // Отправка текста
   const sendText = useCallback(async () => {
@@ -387,6 +469,25 @@ export default function ChatScreen() {
     }
   };
 
+  // Удалить своё сообщение (и файл, если это голосовое или фото)
+  const deleteMessage = async (m: Message) => {
+    const { data, error } = await supabase.from('messages').delete().eq('id', m.id).select('id');
+    if (error || !data || data.length === 0) {
+      Alert.alert('Не удалось удалить', error?.message ?? 'Нет прав на удаление. Выполнен ли SQL из файла 8-small-things-sql?');
+      return;
+    }
+    setMessages((prev) => prev.filter((x) => x.id !== m.id));
+    if (m.audio_path) await supabase.storage.from('voice').remove([m.audio_path]);
+    if (m.image_path) await supabase.storage.from('photos').remove([m.image_path]);
+  };
+
+  const confirmDelete = (m: Message) => {
+    Alert.alert('Удалить сообщение?', 'Оно исчезнет и у собеседника.', [
+      { text: 'Отмена', style: 'cancel' },
+      { text: 'Удалить', style: 'destructive', onPress: () => deleteMessage(m) },
+    ]);
+  };
+
   const renderItem = ({ item, index }: { item: Message; index: number }) => {
     const mine = item.sender_id === userId;
     // Список перевёрнут: индекс 0 — самое новое сообщение
@@ -397,6 +498,8 @@ export default function ChatScreen() {
     const groupedWithNewer =
       !!newer && newer.sender_id === item.sender_id && dayKey(newer.created_at) === dayKey(item.created_at);
     const isImage = !!item.image_path;
+    const isRead = mine && !!otherReadAt && new Date(item.created_at).getTime() <= new Date(otherReadAt).getTime();
+    const onLongPress = mine ? () => confirmDelete(item) : undefined;
 
     return (
       <View>
@@ -412,7 +515,9 @@ export default function ChatScreen() {
             !groupedWithNewer && styles.rowGroupEnd,
           ]}
         >
-          <View
+          <Pressable
+            onLongPress={onLongPress}
+            delayLongPress={350}
             style={[
               styles.bubble,
               mine ? styles.bubbleMine : styles.bubbleTheirs,
@@ -421,14 +526,17 @@ export default function ChatScreen() {
             ]}
           >
             {item.image_path ? (
-              <ImageBubble path={item.image_path} />
+              <ImageBubble path={item.image_path} onLongPress={onLongPress} />
             ) : item.audio_path ? (
-              <VoiceBubble path={item.audio_path} mine={mine} />
+              <VoiceBubble path={item.audio_path} mine={mine} onLongPress={onLongPress} />
             ) : (
               <Text style={[styles.msgText, mine && styles.msgTextMine]}>{item.text}</Text>
             )}
-            <Text style={[styles.msgTime, mine && styles.msgTimeMine]}>{timeOf(item.created_at)}</Text>
-          </View>
+            <Text style={[styles.msgTime, mine && styles.msgTimeMine]}>
+              {timeOf(item.created_at)}
+              {mine && <Text style={isRead ? styles.tickRead : undefined}>{isRead ? '  ✓✓' : '  ✓'}</Text>}
+            </Text>
+          </Pressable>
         </View>
       </View>
     );
@@ -440,13 +548,30 @@ export default function ChatScreen() {
       behavior="padding"
       keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
-      <Stack.Screen options={{ title: name ? String(name) : 'Чат' }} />
+      <Stack.Screen
+        options={{
+          title: name ? String(name) : 'Чат',
+          headerTitle: () => (
+            <View>
+              <Text style={styles.headerName} numberOfLines={1}>
+                {name ? String(name) : 'Чат'}
+              </Text>
+              {typingKind && (
+                <Text style={styles.headerTyping}>
+                  {typingKind === 'voice' ? 'записывает голосовое…' : 'печатает…'}
+                </Text>
+              )}
+            </View>
+          ),
+        }}
+      />
 
       <FlatList
         data={messages}
         inverted
         keyExtractor={(m) => m.id}
         renderItem={renderItem}
+        extraData={otherReadAt}
         contentContainerStyle={styles.list}
       />
 
@@ -457,7 +582,7 @@ export default function ChatScreen() {
         <TextInput
           style={styles.input}
           value={text}
-          onChangeText={setText}
+          onChangeText={onChangeText}
           placeholder="Сообщение"
           multiline
         />
@@ -496,6 +621,9 @@ const styles = StyleSheet.create({
   msgTextMine: { color: '#fff' },
   msgTime: { alignSelf: 'flex-end', fontSize: 11, color: '#8a8f98', marginTop: 2, marginRight: 2 },
   msgTimeMine: { color: 'rgba(255,255,255,0.75)' },
+  tickRead: { color: '#9be7ff', fontWeight: '700' },
+  headerName: { fontSize: 17, fontWeight: '700', color: '#111' },
+  headerTyping: { fontSize: 12, color: '#2563eb' },
   dateChip: {
     alignSelf: 'center',
     backgroundColor: 'rgba(0,0,0,0.28)',
