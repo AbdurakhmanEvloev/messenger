@@ -14,7 +14,9 @@ import {
   Alert,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Modal,
   Platform,
   Pressable,
@@ -224,7 +226,8 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [typingKind, setTypingKind] = useState<null | 'text' | 'voice'>(null); // собеседник печатает / записывает
   const [otherReadAt, setOtherReadAt] = useState<string | null>(null); // когда собеседник последний раз читал чат
-  const [peerAvatar, setPeerAvatar] = useState<string | null>(null); // аватарка собеседника
+  const [peerAvatar, setPeerAvatar] = useState<string | null>(null);
+  const [peerId, setPeerId] = useState<string | null>(null);
 
   const userIdRef = useRef<string | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -233,18 +236,49 @@ export default function ChatScreen() {
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
+    // Клавиатура: на iOS поднимаем панель ввода на высоту клавиатуры
+  const [kbHeight, setKbHeight] = useState(0);
+  const [kbVisible, setKbVisible] = useState(false);
+
+    useEffect(() => {
+    const ios = Platform.OS === 'ios';
+    const animate = (duration: number) => {
+      if (!ios) return;
+      LayoutAnimation.configureNext({
+        duration: duration > 0 ? duration : 250,
+        update: { type: LayoutAnimation.Types.keyboard },
+      });
+    };
+
+    const show = Keyboard.addListener(ios ? 'keyboardWillShow' : 'keyboardDidShow', (e) => {
+      animate(e.duration);
+      setKbHeight(e.endCoordinates.height);
+      setKbVisible(true);
+    });
+    const hide = Keyboard.addListener(ios ? 'keyboardWillHide' : 'keyboardDidHide', (e) => {
+      animate(e.duration);
+      setKbHeight(0);
+      setKbVisible(false);
+    });
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   // Аватарка собеседника для шапки
   useEffect(() => {
     (async () => {
       const { data: u } = await supabase.auth.getUser();
       const { data } = await supabase
         .from('chat_members')
-        .select('profiles(avatar_path)')
+        .select('user_id, profiles(avatar_path)')
         .eq('chat_id', chatId)
         .neq('user_id', u.user?.id ?? '')
         .limit(1)
         .single();
       setPeerAvatar((data as any)?.profiles?.avatar_path ?? null);
+      setPeerId((data as any)?.user_id ?? null);
     })();
   }, [chatId]);
 
@@ -443,14 +477,27 @@ export default function ChatScreen() {
     }
   };
 
-  // Выбрать фото из галереи и отправить
-  const pickAndSendPhoto = async () => {
+      // Сделать фото камерой или выбрать из галереи и отправить
+  const pickAndSendPhoto = async (source: 'library' | 'camera' = 'library') => {
     if (!userId || sending) return;
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        quality: 0.7,
-      });
+      let result;
+      if (source === 'camera') {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert('Нет доступа', 'Разрешите камеру в настройках телефона');
+          return;
+        }
+        result = await ImagePicker.launchCameraAsync({
+          mediaTypes: ['images'],
+          quality: 0.7,
+        });
+      } else {
+        result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          quality: 0.7,
+        });
+      }
       if (result.canceled || !result.assets?.[0]) return;
 
       setSending(true);
@@ -560,11 +607,11 @@ export default function ChatScreen() {
     );
   };
 
-  return (
+    return (
     <KeyboardAvoidingView
       style={styles.container}
+            enabled={false}
       behavior="padding"
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
     >
       <Stack.Screen
         options={{
@@ -572,7 +619,7 @@ export default function ChatScreen() {
           headerTitle: () => (
             <Pressable
               style={styles.headerRow}
-              onPress={() => router.push(`/user/${chatId}`)}
+              onPress={() => peerId && router.push(`/user/${peerId}`)}
             >
               <Avatar name={name ? String(name) : '?'} path={peerAvatar} size={36} />
               <View>
@@ -597,19 +644,63 @@ export default function ChatScreen() {
         renderItem={renderItem}
         extraData={otherReadAt}
         contentContainerStyle={styles.list}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="none"
       />
 
-      <View style={[styles.inputBar, { paddingBottom: 8 + insets.bottom }]}>
-        <Pressable style={styles.attachBtn} onPress={pickAndSendPhoto} disabled={sending}>
-          <Text style={styles.attachText}>📎</Text>
-        </Pressable>
-        <TextInput
-          style={styles.input}
-          value={text}
-          onChangeText={onChangeText}
-          placeholder="Сообщение"
-          multiline
-        />
+      <View style={[ styles.inputBar,
+          {
+            backgroundColor: 'transparent',
+            borderTopWidth: 0,
+            paddingBottom: 8 + (Platform.OS === 'ios' && kbVisible ? 0 : insets.bottom),
+          },
+        ]}
+      >
+        <View
+          style={{
+            flex: 1,
+            flexDirection: 'row',
+            alignItems: 'flex-end',
+            backgroundColor: '#fff',
+            borderRadius: 20,
+            paddingLeft: 14,
+            paddingRight: 2,
+          }}
+        >
+          <TextInput
+            style={{
+              flex: 1,
+              minHeight: 40,
+              maxHeight: 100,
+              paddingVertical: 8,
+              fontSize: 16,
+              color: '#111',
+              textAlignVertical: 'center',
+            }}
+            value={text}
+            onChangeText={onChangeText}
+            placeholder="Сообщение"
+            placeholderTextColor="#8a8f98"
+            multiline
+          />
+          <Pressable
+            style={{ width: 38, height: 40, alignItems: 'center', justifyContent: 'center' }}
+            onPress={() => pickAndSendPhoto('library')}
+            disabled={sending}
+          >
+            <Text style={styles.attachText}>📎</Text>
+          </Pressable>
+          {text.trim().length === 0 && (
+            <Pressable
+              style={{ width: 38, height: 40, alignItems: 'center', justifyContent: 'center' }}
+              onPress={() => pickAndSendPhoto('camera')}
+              disabled={sending || recording}
+            >
+              <Text style={styles.attachText}>📷</Text>
+            </Pressable>
+          )}
+        </View>
+
         {text.trim().length > 0 ? (
           <Pressable style={styles.button} onPress={sendText}>
             <Text style={styles.buttonText}>➤</Text>
@@ -624,6 +715,10 @@ export default function ChatScreen() {
           </Pressable>
         )}
       </View>
+
+      {/* iOS: подпорка высотой с клавиатуру, она поднимает панель ввода */}
+      <View style={{ height: kbHeight }} />
+
     </KeyboardAvoidingView>
   );
 }
