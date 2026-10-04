@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Avatar from '../components/Avatar';
 import { supabase } from '../lib/supabase';
 
 type ChatRow = {
@@ -14,16 +15,8 @@ type ChatRow = {
   last_sender_id: string | null;
   last_at: string;
   unread_count: number;
+  avatar_path: string | null;
 };
-
-const AVATAR_COLORS = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#db2777', '#4f46e5'];
-
-// Цвет аватарки зависит от имени, поэтому у каждого человека он свой и не меняется
-function avatarColor(name: string) {
-  let sum = 0;
-  for (let i = 0; i < name.length; i++) sum += name.charCodeAt(i);
-  return AVATAR_COLORS[sum % AVATAR_COLORS.length];
-}
 
 function pad(n: number) {
   return String(n).padStart(2, '0');
@@ -102,9 +95,7 @@ export default function Chats() {
         style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
         onPress={() => router.push(`/chat/${item.chat_id}?name=${encodeURIComponent(name)}`)}
       >
-        <View style={[styles.avatar, { backgroundColor: avatarColor(name) }]}>
-          <Text style={styles.avatarText}>{name[0]?.toUpperCase()}</Text>
-        </View>
+        <Avatar name={name} path={item.avatar_path} size={54} />
 
         <View style={styles.rowBody}>
           <View style={styles.rowTop}>
@@ -167,8 +158,6 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10 },
   rowPressed: { backgroundColor: '#f2f4f7' },
-  avatar: { width: 54, height: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#fff', fontSize: 22, fontWeight: '600' },
   rowBody: { flex: 1, marginLeft: 14 },
   rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 3 },
