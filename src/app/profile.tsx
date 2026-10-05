@@ -11,6 +11,7 @@ export default function Profile() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [bio, setBio] = useState('');
+  const [nickname, setNickname] = useState('');
   const [userId, setUserId] = useState('');
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -22,13 +23,14 @@ export default function Profile() {
       setUserId(data.user.id);
       const { data: p } = await supabase
         .from('profiles')
-        .select('username, avatar_path, bio')
+        .select('username, avatar_path, bio, nickname')
         .eq('id', data.user.id)
         .single();
       if (p) {
         setUsername(p.username ?? '');
         setAvatarPath(p.avatar_path ?? null);
         setBio(p.bio ?? '');
+        setNickname(p.nickname ?? '');
       }
     })();
   }, []);
@@ -39,10 +41,19 @@ export default function Profile() {
       Alert.alert('Введите имя', 'Имя не может быть пустым');
       return;
     }
+    const nick = nickname.trim().toLowerCase();
+    if (nick && !/^[a-z0-9_]{3,20}$/.test(nick)) {
+      Alert.alert('Неверный ник', 'Ник: от 3 до 20 символов, только латинские буквы, цифры и _');
+      return;
+    }
     const { error } = await supabase
       .from('profiles')
-      .update({ username: name, bio: bio.trim() })
+      .update({ username: name, bio: bio.trim(), nickname: nick || null })
       .eq('id', userId);
+    if (error?.code === '23505') {
+      Alert.alert('Ник занят', 'Этот ник уже используется другим пользователем. Выберите другой.');
+      return;
+    }
     Alert.alert(error ? 'Ошибка' : 'Сохранено', error?.message ?? 'Профиль обновлён');
   };
 
@@ -129,6 +140,24 @@ export default function Profile() {
           placeholderTextColor="#9aa0a6"
           maxLength={40}
         />
+
+        <Text style={styles.label}>Ник (по нему вас найдут)</Text>
+        <View style={[styles.input, { flexDirection: 'row', alignItems: 'center' }]}>
+          <Text style={{ fontSize: 16, color: '#9aa0a6', marginRight: 2 }}>@</Text>
+          <TextInput
+            style={{ flex: 1, fontSize: 16, color: '#111', padding: 0 }}
+            value={nickname}
+            onChangeText={(v) => setNickname(v.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase())}
+            placeholder="nickname"
+            placeholderTextColor="#9aa0a6"
+            autoCapitalize="none"
+            autoCorrect={false}
+            maxLength={20}
+          />
+        </View>
+        <Text style={{ fontSize: 12, color: '#9aa0a6', marginTop: -10, marginBottom: 16 }}>
+          3–20 символов: латинские буквы, цифры и _
+        </Text>Í
 
         <Text style={styles.label}>О себе (чем занимаетесь)</Text>
         <TextInput

@@ -1,40 +1,50 @@
-// src/app/users.tsx — выбор собеседника для нового чата (полный файл)
+// src/app/users.tsx — поиск собеседника по нику (полный файл)
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import Avatar from '../components/Avatar';
 import { supabase } from '../lib/supabase';
 
-type UserRow = { id: string; username: string | null; avatar_path: string | null };
+type UserRow = { id: string; username: string | null; nickname: string | null; avatar_path: string | null };
 
 export default function Users() {
   const router = useRouter();
-  const [users, setUsers] = useState<UserRow[]>([]);
   const [query, setQuery] = useState('');
+  const [results, setResults] = useState<UserRow[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  const q = query.trim().toLowerCase().replace(/^@/, '');
+
+  // Ищем через 0,3 секунды после последнего нажатия клавиши
   useEffect(() => {
-    (async () => {
-      const { data: u } = await supabase.auth.getUser();
-      const { data } = await supabase
-        .from('profiles')
-        .select('id, username, avatar_path')
-        .neq('id', u.user?.id ?? '');
-      setUsers((data ?? []) as UserRow[]);
-    })();
-  }, []);
+    if (!q) {
+      setResults([]);
+      setSearching(false);
+      setError(null);
+      return;
+    }
+    let active = true;
+    setSearching(true);
+    const timer = setTimeout(async () => {
+      const { data, error: err } = await supabase.rpc('search_users', { q });
+      if (!active) return;
+      if (err) console.log('[SEARCH] ошибка:', err.message);
+      setError(err ? err.message : null);
+      setResults(err ? [] : ((data ?? []) as UserRow[]));
+      setSearching(false);
+    }, 300);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [q]);
 
   const open = async (id: string, name: string) => {
-    const { data, error } = await supabase.rpc('start_chat', { other: id });
-    if (error) return Alert.alert('Ошибка', error.message);
+    const { data, error: err } = await supabase.rpc('start_chat', { other: id });
+    if (err) return Alert.alert('Ошибка', err.message);
     router.replace(`/chat/${data}?name=${encodeURIComponent(name)}`);
   };
-
-  // Поиск по имени: пока ничего не введено, показываем всех
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter((u) => (u.username ?? '').toLowerCase().includes(q));
-  }, [users, query]);
 
   return (
     <View style={styles.container}>
@@ -43,31 +53,41 @@ export default function Users() {
           style={styles.search}
           value={query}
           onChangeText={setQuery}
-          placeholder="Поиск по имени"
+          placeholder="Поиск по @нику"
           placeholderTextColor="#9aa0a6"
+          autoCapitalize="none"
           autoCorrect={false}
         />
       </View>
 
       <FlatList
-        data={filtered}
+        data={results}
         keyExtractor={(i) => i.id}
         keyboardShouldPersistTaps="handled"
         ItemSeparatorComponent={() => <View style={styles.separator} />}
         ListEmptyComponent={
           <Text style={styles.empty}>
-            {query.trim() ? 'Никого не нашли' : 'Других пользователей пока нет'}
+            {!q
+              ? 'Введите ник, чтобы найти человека'
+              : searching
+              ? 'Ищем…'
+              : error
+              ? `Ошибка поиска: ${error}`
+              : 'Никого не нашли'}
           </Text>
         }
         renderItem={({ item }) => {
-          const name = item.username ?? 'Без имени';
+          const name = item.username ?? item.nickname ?? 'Без имени';
           return (
             <Pressable
               style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
               onPress={() => open(item.id, name)}
             >
               <Avatar name={name} path={item.avatar_path} size={46} />
-              <Text style={styles.name}>{name}</Text>
+              <View style={{ marginLeft: 14 }}>
+                <Text style={styles.name}>{name}</Text>
+                {item.nickname ? <Text style={styles.nick}>@{item.nickname}</Text> : null}
+              </View>
             </Pressable>
           );
         }}
@@ -87,9 +107,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#111',
   },
-  empty: { textAlign: 'center', color: '#8a8f98', marginTop: 40 },
+  empty: { textAlign: 'center', color: '#8a8f98', marginTop: 40, paddingHorizontal: 24 },
   row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10 },
   rowPressed: { backgroundColor: '#f2f4f7' },
-  name: { fontSize: 17, fontWeight: '500', color: '#111', marginLeft: 14 },
+  name: { fontSize: 17, fontWeight: '500', color: '#111' },
+  nick: { fontSize: 14, color: '#8a8f98', marginTop: 2 },
   separator: { height: StyleSheet.hairlineWidth, backgroundColor: '#e3e6ea', marginLeft: 76 },
 });
