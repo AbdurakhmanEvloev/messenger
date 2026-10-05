@@ -70,9 +70,13 @@ function timeOf(iso: string) {
 }
 
 // ---------- Пузырь с фото ----------
+const PHOTO_MAX_W = 240;
+const PHOTO_MAX_H = 320;
+
 function ImageBubble({ path, onLongPress }: { path: string; onLongPress?: () => void }) {
   const [url, setUrl] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [size, setSize] = useState({ width: 220, height: 220 });
 
   useEffect(() => {
     let active = true;
@@ -80,19 +84,34 @@ function ImageBubble({ path, onLongPress }: { path: string; onLongPress?: () => 
       .from('photos')
       .createSignedUrl(path, 3600)
       .then(({ data }) => {
-        if (active && data) setUrl(data.signedUrl);
+        if (!active || !data) return;
+        setUrl(data.signedUrl);
+        // Узнаём размеры фото и подгоняем пузырь под его пропорции
+        Image.getSize(
+          data.signedUrl,
+          (w, h) => {
+            if (!active || !w || !h) return;
+            const scale = Math.min(PHOTO_MAX_W / w, PHOTO_MAX_H / h);
+            setSize({ width: Math.round(w * scale), height: Math.round(h * scale) });
+          },
+          () => {}
+        );
       });
     return () => {
       active = false;
     };
   }, [path]);
 
-  if (!url) return <View style={styles.photoPlaceholder} />;
+  if (!url) return <View style={[styles.photoPlaceholder, size]} />;
 
   return (
     <>
       <Pressable onPress={() => setOpen(true)} onLongPress={onLongPress}>
-        <Image source={{ uri: url }} style={styles.photo} resizeMode="cover" />
+        <Image
+          source={{ uri: url }}
+          style={{ width: size.width, height: size.height }}
+          resizeMode="cover"
+        />
       </Pressable>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.viewer} onPress={() => setOpen(false)}>
@@ -175,8 +194,8 @@ function VoiceBubble({ path, mine, onLongPress }: { path: string; mine: boolean;
   };
 
   const progress = duration > 0 ? position / duration : 0;
-  const activeColor = mine ? '#ffffff' : '#2f80ed';
-  const inactiveColor = mine ? 'rgba(255,255,255,0.45)' : '#b0bec5';
+  const activeColor = mine ? '#7c5cd6' : '#2f80ed';
+  const inactiveColor = mine ? 'rgba(124,92,214,0.35)' : '#b0bec5';
 
   return (
     <View style={styles.voiceRow}>
@@ -565,6 +584,8 @@ export default function ChatScreen() {
     const isImage = !!item.image_path;
     const isRead = mine && !!otherReadAt && new Date(item.created_at).getTime() <= new Date(otherReadAt).getTime();
     const onLongPress = mine ? () => confirmDelete(item) : undefined;
+    const firstInGroup =
+    !older || older.sender_id !== item.sender_id || dayKey(older.created_at) !== dayKey(item.created_at);
 
     return (
       <View>
@@ -580,14 +601,14 @@ export default function ChatScreen() {
             !groupedWithNewer && styles.rowGroupEnd,
           ]}
         >
-          <Pressable
+         <Pressable
             onLongPress={onLongPress}
             delayLongPress={350}
             style={[
               styles.bubble,
               mine ? styles.bubbleMine : styles.bubbleTheirs,
               isImage && styles.bubbleImage,
-              !groupedWithNewer && (mine ? styles.tailMine : styles.tailTheirs),
+              !mine && firstInGroup && styles.tailFirst,
             ]}
           >
             {item.image_path ? (
@@ -595,12 +616,22 @@ export default function ChatScreen() {
             ) : item.audio_path ? (
               <VoiceBubble path={item.audio_path} mine={mine} onLongPress={onLongPress} />
             ) : (
-              <Text style={[styles.msgText, mine && styles.msgTextMine]}>{item.text}</Text>
+              <View style={styles.textRow}>
+                <Text style={[styles.msgText, mine && styles.msgTextMine, { flexShrink: 1 }]}>
+                  {item.text}
+                </Text>
+                <Text style={[styles.msgTime, styles.msgTimeInline, mine && styles.msgTimeMine]}>
+                  {timeOf(item.created_at)}
+                  {mine && <Text style={isRead ? styles.tickRead : undefined}>{isRead ? ' ✓✓' : ' ✓'}</Text>}
+                </Text>
+              </View>
             )}
-            <Text style={[styles.msgTime, mine && styles.msgTimeMine]}>
-              {timeOf(item.created_at)}
-              {mine && <Text style={isRead ? styles.tickRead : undefined}>{isRead ? '  ✓✓' : '  ✓'}</Text>}
-            </Text>
+            {(isImage || !!item.audio_path) && (
+              <Text style={[styles.msgTime, mine && styles.msgTimeMine, isImage && styles.msgTimeOnPhoto]}>
+                {timeOf(item.created_at)}
+                {mine && <Text style={isRead ? styles.tickRead : undefined}>{isRead ? '  ✓✓' : '  ✓'}</Text>}
+              </Text>
+            )}
           </Pressable>
         </View>
       </View>
@@ -724,23 +755,39 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#e9eef5' },
+  container: { flex: 1, backgroundColor: '#fce9ef' },
   list: { padding: 12 },
   row: { flexDirection: 'row', marginVertical: 1 },
   rowGroupEnd: { marginBottom: 6 },
   rowMine: { justifyContent: 'flex-end' },
   rowTheirs: { justifyContent: 'flex-start' },
-  bubble: { maxWidth: '80%', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16 },
-  bubbleMine: { backgroundColor: '#2f80ed' },
+  bubble: { maxWidth: '80%', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18 },
+  bubbleMine: { backgroundColor: '#e6dcfb' },
   bubbleTheirs: { backgroundColor: '#ffffff' },
   tailMine: { borderBottomRightRadius: 4 },
   tailTheirs: { borderBottomLeftRadius: 4 },
-  bubbleImage: { padding: 4 },
+    bubbleImage: { paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
   msgText: { fontSize: 16, color: '#111' },
-  msgTextMine: { color: '#fff' },
+  msgTextMine: { color: '#111' },
   msgTime: { alignSelf: 'flex-end', fontSize: 11, color: '#8a8f98', marginTop: 2, marginRight: 2 },
-  msgTimeMine: { color: 'rgba(255,255,255,0.75)' },
-  tickRead: { color: '#9be7ff', fontWeight: '700' },
+  msgTimeMine: { color: '#7a7585' },
+  textRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end' },
+  msgTimeInline: { marginLeft: 10, marginTop: 0, marginRight: 0, marginBottom: 1 },
+  tailFirst: { borderTopLeftRadius: 3 },
+    msgTimeOnPhoto: {
+    position: 'absolute',
+    right: 8,
+    bottom: 6,
+    marginTop: 0,
+    marginRight: 0,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    color: '#fff',
+  },
+  tickRead: { color: '#2f80ed', fontWeight: '700' },
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerName: { fontSize: 17, fontWeight: '700', color: '#111' },
   headerTyping: { fontSize: 12, color: '#2563eb' },
@@ -791,7 +838,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
-  playBtnMine: { backgroundColor: 'rgba(255,255,255,0.25)' },
+  playBtnMine: { backgroundColor: '#7c5cd6' },
   playBtnTheirs: { backgroundColor: '#2f80ed' },
   playIcon: { fontSize: 13 },
   playIconMine: { color: '#fff' },
@@ -806,8 +853,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   attachText: { fontSize: 22 },
-  photo: { width: 220, height: 220, borderRadius: 12 },
-  photoPlaceholder: { width: 220, height: 220, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.08)' },
+  photo: { width: 220, height: 220, borderRadius: 0 },
+  photoPlaceholder: { width: 220, height: 220, borderRadius: 0, backgroundColor: 'rgba(0,0,0,0.08)' },
   viewer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center' },
   viewerImage: { width: '100%', height: '100%' },
 });
