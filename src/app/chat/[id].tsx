@@ -94,7 +94,7 @@ function ImageBubble({ path, onLongPress }: { path: string; onLongPress?: () => 
             const scale = Math.min(PHOTO_MAX_W / w, PHOTO_MAX_H / h);
             setSize({ width: Math.round(w * scale), height: Math.round(h * scale) });
           },
-          () => {}
+          () => { }
         );
       });
     return () => {
@@ -231,6 +231,63 @@ function VoiceBubble({ path, mine, onLongPress }: { path: string; mine: boolean;
   );
 }
 
+// ---------- Галочки и время под сообщением ----------
+function Ticks({ read, color }: { read: boolean; color: string }) {
+  return (
+    <Image
+      source={
+        read
+          ? require('../../../assets/icons/tick_all.png')
+          : require('../../../assets/icons/tick.png')
+      }
+      style={{ width: read ? 18 : 14, height: 14, tintColor: color }}
+      resizeMode="contain"
+    />
+  );
+}
+
+function MessageMeta({
+  time,
+  mine,
+  read,
+  onPhoto = false,
+  inline = false,
+}: {
+  time: string;
+  mine: boolean;
+  read: boolean;
+  onPhoto?: boolean;
+  inline?: boolean;
+}) {
+  const timeColor = onPhoto ? '#fff' : mine ? '#7a7585' : '#8a8f98';
+  const tickColor = read ? (onPhoto ? '#6cb2ff' : '#2f80ed') : onPhoto ? '#fff' : '#9a94a8';
+  return (
+    <View
+      style={[
+        { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 2 },
+        inline && { marginLeft: 10, marginTop: 0, marginBottom: 1 },
+        onPhoto && {
+          position: 'absolute',
+          right: 8,
+          bottom: 6,
+          marginTop: 0,
+          paddingHorizontal: 6,
+          paddingVertical: 2,
+          borderRadius: 10,
+          backgroundColor: 'rgba(0,0,0,0.45)',
+        },
+      ]}
+    >
+      <Text style={{ fontSize: 11, color: timeColor }}>{time}</Text>
+      {mine && (
+        <View style={{ marginLeft: 4 }}>
+          <Ticks read={read} color={tickColor} />
+        </View>
+      )}
+    </View>
+  );
+}
+
 // ---------- Экран чата ----------
 export default function ChatScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
@@ -255,11 +312,11 @@ export default function ChatScreen() {
 
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
 
-    // Клавиатура: на iOS поднимаем панель ввода на высоту клавиатуры
+  // Клавиатура: на iOS поднимаем панель ввода на высоту клавиатуры
   const [kbHeight, setKbHeight] = useState(0);
   const [kbVisible, setKbVisible] = useState(false);
 
-    useEffect(() => {
+  useEffect(() => {
     const ios = Platform.OS === 'ios';
     const animate = (duration: number) => {
       if (!ios) return;
@@ -496,7 +553,7 @@ export default function ChatScreen() {
     }
   };
 
-      // Сделать фото камерой или выбрать из галереи и отправить
+  // Сделать фото камерой или выбрать из галереи и отправить
   const pickAndSendPhoto = async (source: 'library' | 'camera' = 'library') => {
     if (!userId || sending) return;
     try {
@@ -585,7 +642,7 @@ export default function ChatScreen() {
     const isRead = mine && !!otherReadAt && new Date(item.created_at).getTime() <= new Date(otherReadAt).getTime();
     const onLongPress = mine ? () => confirmDelete(item) : undefined;
     const firstInGroup =
-    !older || older.sender_id !== item.sender_id || dayKey(older.created_at) !== dayKey(item.created_at);
+      !older || older.sender_id !== item.sender_id || dayKey(older.created_at) !== dayKey(item.created_at);
 
     return (
       <View>
@@ -601,7 +658,7 @@ export default function ChatScreen() {
             !groupedWithNewer && styles.rowGroupEnd,
           ]}
         >
-         <Pressable
+          <Pressable
             onLongPress={onLongPress}
             delayLongPress={350}
             style={[
@@ -620,17 +677,11 @@ export default function ChatScreen() {
                 <Text style={[styles.msgText, mine && styles.msgTextMine, { flexShrink: 1 }]}>
                   {item.text}
                 </Text>
-                <Text style={[styles.msgTime, styles.msgTimeInline, mine && styles.msgTimeMine]}>
-                  {timeOf(item.created_at)}
-                  {mine && <Text style={isRead ? styles.tickRead : undefined}>{isRead ? ' ✓✓' : ' ✓'}</Text>}
-                </Text>
+                <MessageMeta time={timeOf(item.created_at)} mine={mine} read={isRead} inline />
               </View>
             )}
             {(isImage || !!item.audio_path) && (
-              <Text style={[styles.msgTime, mine && styles.msgTimeMine, isImage && styles.msgTimeOnPhoto]}>
-                {timeOf(item.created_at)}
-                {mine && <Text style={isRead ? styles.tickRead : undefined}>{isRead ? '  ✓✓' : '  ✓'}</Text>}
-              </Text>
+              <MessageMeta time={timeOf(item.created_at)} mine={mine} read={isRead} onPhoto={isImage} />
             )}
           </Pressable>
         </View>
@@ -638,10 +689,10 @@ export default function ChatScreen() {
     );
   };
 
-    return (
+  return (
     <KeyboardAvoidingView
       style={styles.container}
-            enabled={false}
+      enabled={false}
       behavior="padding"
     >
       <Stack.Screen
@@ -679,13 +730,13 @@ export default function ChatScreen() {
         keyboardDismissMode="none"
       />
 
-      <View style={[ styles.inputBar,
-          {
-            backgroundColor: 'transparent',
-            borderTopWidth: 0,
-            paddingBottom: 8 + (Platform.OS === 'ios' && kbVisible ? 0 : insets.bottom),
-          },
-        ]}
+      <View style={[styles.inputBar,
+      {
+        backgroundColor: 'transparent',
+        borderTopWidth: 0,
+        paddingBottom: 8 + (Platform.OS === 'ios' && kbVisible ? 0 : insets.bottom),
+      },
+      ]}
       >
         <View
           style={{
@@ -719,7 +770,7 @@ export default function ChatScreen() {
             onPress={() => pickAndSendPhoto('library')}
             disabled={sending}
           >
-            <Text style={styles.attachText}>📎</Text>
+            <Image source={require('../../../assets/icons/clip.png')} style={{ width: 24, height: 24, tintColor: '#6b7280' }} />
           </Pressable>
           {text.trim().length === 0 && (
             <Pressable
@@ -727,14 +778,14 @@ export default function ChatScreen() {
               onPress={() => pickAndSendPhoto('camera')}
               disabled={sending || recording}
             >
-              <Text style={styles.attachText}>📷</Text>
+              <Image source={require('../../../assets/icons/camera.png')} style={{ width: 24, height: 24, tintColor: '#6b7280' }} />
             </Pressable>
           )}
         </View>
 
         {text.trim().length > 0 ? (
           <Pressable style={styles.button} onPress={sendText}>
-            <Text style={styles.buttonText}>➤</Text>
+            <Image source={require('../../../assets/icons/send.png')} style={{ width: 22, height: 22, tintColor: '#fff' }} />
           </Pressable>
         ) : (
           <Pressable
@@ -742,7 +793,14 @@ export default function ChatScreen() {
             onPress={recording ? stopAndSend : startRecording}
             disabled={sending}
           >
-            <Text style={styles.buttonText}>{recording ? '■' : '🎤'}</Text>
+            {recording ? (
+              <Text style={styles.buttonText}>■</Text>
+            ) : (
+              <Image
+                source={require('../../../assets/icons/mic.png')}
+                style={{ width: 22, height: 22, tintColor: '#fff' }}
+              />
+            )}
           </Pressable>
         )}
       </View>
@@ -766,7 +824,7 @@ const styles = StyleSheet.create({
   bubbleTheirs: { backgroundColor: '#ffffff' },
   tailMine: { borderBottomRightRadius: 4 },
   tailTheirs: { borderBottomLeftRadius: 4 },
-    bubbleImage: { paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
+  bubbleImage: { paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
   msgText: { fontSize: 16, color: '#111' },
   msgTextMine: { color: '#111' },
   msgTime: { alignSelf: 'flex-end', fontSize: 11, color: '#8a8f98', marginTop: 2, marginRight: 2 },
@@ -774,7 +832,7 @@ const styles = StyleSheet.create({
   textRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end' },
   msgTimeInline: { marginLeft: 10, marginTop: 0, marginRight: 0, marginBottom: 1 },
   tailFirst: { borderTopLeftRadius: 3 },
-    msgTimeOnPhoto: {
+  msgTimeOnPhoto: {
     position: 'absolute',
     right: 8,
     bottom: 6,

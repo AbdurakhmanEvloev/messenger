@@ -1,15 +1,28 @@
 import { Stack } from 'expo-router';
-import { Alert, Pressable, Text, View } from 'react-native';
+import { Alert, Image, Pressable, Text, View } from 'react-native';
 
 export default function Layout() {
   return (
-    <Stack>
+    <Stack
+      screenOptions={({ navigation }) => ({
+        headerLeft: () =>
+          navigation.canGoBack() ? (
+            <Pressable onPress={() => navigation.goBack()} hitSlop={12} style={{ paddingRight: 8 }}>
+              <Image
+                source={require('../../assets/icons/back.png')}
+                style={{ width: 30, height: 30, tintColor: '#3e4044' }}
+              />
+            </Pressable>
+          ) : null,
+      })}
+    >
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen
         name="chats"
         options={({ navigation }) => ({
           title: 'Чаты',
           headerBackVisible: false,
+          headerLeft: () => null,
           headerRight: () => (
             <View style={{ flexDirection: 'row', gap: 16 }}>
               <Pressable onPress={() => navigation.navigate('users')}>

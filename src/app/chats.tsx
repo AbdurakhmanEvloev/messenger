@@ -1,7 +1,7 @@
 // src/app/chats.tsx — список чатов (поиск + три точки в шапке)
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import { supabase } from '../lib/supabase';
@@ -89,10 +89,10 @@ export default function Chats() {
   const q = query.trim().toLowerCase();
   const shown = q
     ? chats.filter(
-        (c) =>
-          (c.username ?? '').toLowerCase().includes(q) ||
-          (c.last_text ?? '').toLowerCase().includes(q)
-      )
+      (c) =>
+        (c.username ?? '').toLowerCase().includes(q) ||
+        (c.last_text ?? '').toLowerCase().includes(q)
+    )
     : chats;
 
   const renderItem = ({ item }: { item: ChatRow }) => {
@@ -135,7 +135,7 @@ export default function Chats() {
 
   return (
     <View style={styles.container}>
-            <Stack.Screen
+      <Stack.Screen
         options={{
           headerRight: () => (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
@@ -183,8 +183,8 @@ export default function Chats() {
                 {error
                   ? error
                   : q
-                  ? 'Попробуйте другое имя или слово.'
-                  : 'Нажмите на синюю кнопку внизу, чтобы начать переписку.'}
+                    ? 'Попробуйте другое имя или слово.'
+                    : 'Нажмите на синюю кнопку внизу, чтобы начать переписку.'}
               </Text>
             </View>
           ) : null
@@ -195,7 +195,10 @@ export default function Chats() {
         style={[styles.fab, { bottom: 20 + insets.bottom }]}
         onPress={() => router.push('/users')}
       >
-        <Text style={styles.fabText}>✎</Text>
+        <Image
+          source={require('../../assets/icons/plus.png')}
+          style={{ width: 28, height: 28, tintColor: '#fff' }}
+        />
       </Pressable>
     </View>
   );
