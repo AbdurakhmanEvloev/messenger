@@ -1,7 +1,7 @@
 // src/app/profile.tsx — мой профиль в стиле X
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import Avatar from '../components/Avatar';
 import BottomBubble from '../components/BottomBubble';
 import { supabase } from '../lib/supabase';
@@ -62,9 +62,54 @@ export default function Profile() {
     } catch {}
   };
 
-  const logout = async () => {
-    await supabase.auth.signOut();
-    router.replace('/');
+  // Выход с подтверждением
+  const logout = () => {
+    Alert.alert('Выйти из аккаунта?', 'Чтобы снова войти, понадобится почта и пароль', [
+      { text: 'Отмена', style: 'cancel' },
+      {
+        text: 'Выйти',
+        style: 'destructive',
+        onPress: async () => {
+          await supabase.auth.signOut();
+          router.replace('/');
+        },
+      },
+    ]);
+  };
+
+  // Удаление аккаунта: два подтверждения
+  const deleteAccount = () => {
+    Alert.alert(
+      'Удалить аккаунт?',
+      'Профиль, ваши сообщения и список друзей будут удалены навсегда. Отменить это нельзя.',
+      [
+        { text: 'Отмена', style: 'cancel' },
+        {
+          text: 'Удалить',
+          style: 'destructive',
+          onPress: () =>
+            Alert.alert('Вы уверены?', 'Это последнее подтверждение. Аккаунт будет удалён сразу.', [
+              { text: 'Отмена', style: 'cancel' },
+              {
+                text: 'Удалить навсегда',
+                style: 'destructive',
+                onPress: async () => {
+                  if (avatarPath) {
+                    await supabase.storage.from('avatars').remove([avatarPath]);
+                  }
+                  const { error } = await supabase.rpc('delete_my_account');
+                  if (error) {
+                    Alert.alert('Не удалось удалить аккаунт', error.message);
+                    return;
+                  }
+                  await supabase.auth.signOut();
+                  router.replace('/');
+                },
+              },
+            ]),
+        },
+      ],
+    );
   };
 
   const name = username || 'Без имени';
@@ -95,7 +140,11 @@ export default function Profile() {
 
         <View style={styles.menu}>
           <Pressable style={styles.menuRow} onPress={logout}>
-            <Text style={styles.menuDanger}>Выйти из аккаунта</Text>
+            <Text style={styles.menuText}>Выйти из аккаунта</Text>
+          </Pressable>
+          <View style={styles.menuLine} />
+          <Pressable style={styles.menuRow} onPress={deleteAccount}>
+            <Text style={styles.menuDanger}>Удалить аккаунт</Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -126,5 +175,7 @@ const styles = StyleSheet.create({
   btnText: { color: '#111', fontSize: 15, fontWeight: '700' },
   menu: { backgroundColor: '#f2f4f7', borderRadius: 14, marginTop: 32 },
   menuRow: { paddingVertical: 15, paddingHorizontal: 16 },
+  menuLine: { height: StyleSheet.hairlineWidth, backgroundColor: '#d9dde3', marginLeft: 16 },
+  menuText: { fontSize: 16, color: '#111' },
   menuDanger: { fontSize: 16, color: '#dc2626' },
 });

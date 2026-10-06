@@ -1,7 +1,7 @@
 // src/app/chats.tsx — список чатов (поиск + три точки в шапке)
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import BottomBubble from '../components/BottomBubble';
@@ -136,23 +136,11 @@ export default function Chats() {
 
   return (
     <View style={styles.container}>
-      <Stack.Screen
-        options={{
-          headerRight: () => (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-              <Pressable hitSlop={10} onPress={() => router.push('/profile')}>
-                <Text style={{ color: '#2563eb', fontSize: 16 }}>Профиль</Text>
-              </Pressable>
-              <Pressable
-                hitSlop={12}
-                onPress={() => Alert.alert('Меню', 'Здесь скоро будут функции')}
-              >
-                <Text style={{ fontSize: 26, color: '#2563eb', lineHeight: 28 }}>⋯</Text>
-              </Pressable>
-            </View>
-          ),
-        }}
-      />
+      <Stack.Screen options={{ headerShown: false }} />
+
+      <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 4 }}>
+        <Text style={{ fontSize: 28, fontWeight: '800', color: '#111' }}>Чаты</Text>
+      </View>
 
       <TextInput
         style={styles.search}
@@ -206,7 +194,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
     marginBottom: 4,
     backgroundColor: '#f2f4f7',
-    borderRadius: 12,
+    borderRadius: 24,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 16,
