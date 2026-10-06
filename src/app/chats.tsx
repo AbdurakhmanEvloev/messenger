@@ -1,9 +1,10 @@
 // src/app/chats.tsx — список чатов (поиск + три точки в шапке)
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { Alert, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
+import BottomBubble from '../components/BottomBubble';
 import { supabase } from '../lib/supabase';
 
 type ChatRow = {
@@ -190,16 +191,10 @@ export default function Chats() {
           ) : null
         }
       />
+      <BottomBubble active="chats" />
+      
 
-      <Pressable
-        style={[styles.fab, { bottom: 20 + insets.bottom }]}
-        onPress={() => router.push('/users')}
-      >
-        <Image
-          source={require('../../assets/icons/plus.png')}
-          style={{ width: 28, height: 28, tintColor: '#fff' }}
-        />
-      </Pressable>
+      
     </View>
   );
 }
@@ -242,20 +237,4 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontWeight: '600', color: '#222', marginBottom: 6 },
   emptyText: { fontSize: 15, color: '#8a8f98', textAlign: 'center' },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: '#2563eb',
-    alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 6,
-    shadowColor: '#000',
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 3 },
-  },
-  fabText: { color: '#fff', fontSize: 26 },
-});
+  });

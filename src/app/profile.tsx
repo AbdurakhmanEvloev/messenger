@@ -1,110 +1,65 @@
-// src/app/profile.tsx — профиль: аватарка, имя, о себе, выход (полный файл)
-import { File } from 'expo-file-system';
-import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+// src/app/profile.tsx — мой профиль в стиле X
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useState } from 'react';
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
 import Avatar from '../components/Avatar';
+import BottomBubble from '../components/BottomBubble';
 import { supabase } from '../lib/supabase';
+
+function formatBirthday(s: string | null) {
+  if (!s) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d).toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
 
 export default function Profile() {
   const router = useRouter();
   const [username, setUsername] = useState('');
-  const [bio, setBio] = useState('');
   const [nickname, setNickname] = useState('');
-  const [userId, setUserId] = useState('');
+  const [bio, setBio] = useState('');
+  const [birthday, setBirthday] = useState<string | null>(null);
+  const [joined, setJoined] = useState('');
   const [avatarPath, setAvatarPath] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!data.user) return;
-      setUserId(data.user.id);
-      const { data: p } = await supabase
-        .from('profiles')
-        .select('username, avatar_path, bio, nickname')
-        .eq('id', data.user.id)
-        .single();
-      if (p) {
-        setUsername(p.username ?? '');
-        setAvatarPath(p.avatar_path ?? null);
-        setBio(p.bio ?? '');
-        setNickname(p.nickname ?? '');
-      }
-    })();
-  }, []);
+  // Обновляем данные каждый раз, когда возвращаемся на экран (например, после редактирования)
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) return;
+        setJoined(
+          new Date(data.user.created_at).toLocaleDateString('ru-RU', {
+            day: 'numeric',
+            month: 'long',
+            year: 'numeric',
+          }),
+        );
+        const { data: p } = await supabase
+          .from('profiles')
+          .select('username, avatar_path, bio, nickname, birthday')
+          .eq('id', data.user.id)
+          .single();
+        if (p) {
+          setUsername(p.username ?? '');
+          setAvatarPath(p.avatar_path ?? null);
+          setBio(p.bio ?? '');
+          setNickname(p.nickname ?? '');
+          setBirthday(p.birthday ?? null);
+        }
+      })();
+    }, []),
+  );
 
-  const save = async () => {
-    const name = username.trim();
-    if (!name) {
-      Alert.alert('Введите имя', 'Имя не может быть пустым');
-      return;
-    }
-    const nick = nickname.trim().toLowerCase();
-    if (nick && !/^[a-z0-9_]{3,20}$/.test(nick)) {
-      Alert.alert('Неверный ник', 'Ник: от 3 до 20 символов, только латинские буквы, цифры и _');
-      return;
-    }
-    const { error } = await supabase
-      .from('profiles')
-      .update({ username: name, bio: bio.trim(), nickname: nick || null })
-      .eq('id', userId);
-    if (error?.code === '23505') {
-      Alert.alert('Ник занят', 'Этот ник уже используется другим пользователем. Выберите другой.');
-      return;
-    }
-    Alert.alert(error ? 'Ошибка' : 'Сохранено', error?.message ?? 'Профиль обновлён');
-  };
-
-  // Выбрать фото, обрезать до квадрата и загрузить как аватарку
-  const changeAvatar = async () => {
-    if (!userId || uploading) return;
+  const share = async () => {
+    const who = nickname ? '@' + nickname : username;
     try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.7,
-      });
-      if (result.canceled || !result.assets?.[0]) return;
-
-      setUploading(true);
-      const asset = result.assets[0];
-      const mime = asset.mimeType ?? 'image/jpeg';
-      const ext = mime.includes('png') ? 'png' : 'jpg';
-
-      const base64 = await new File(asset.uri).base64();
-      const binary = atob(base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      console.log('[AVATAR] размер, байт:', bytes.length);
-      if (bytes.length < 500) throw new Error('Файл фото пустой');
-
-      // Папка = id пользователя: так требует правило безопасности бакета avatars
-      const path = `${userId}/${Date.now()}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from('avatars')
-        .upload(path, bytes.buffer, { contentType: mime });
-      console.log('[AVATAR] загрузка, ошибка:', upErr?.message ?? 'нет');
-      if (upErr) throw upErr;
-
-      const { error: updErr } = await supabase
-        .from('profiles')
-        .update({ avatar_path: path })
-        .eq('id', userId);
-      if (updErr) throw updErr;
-
-      // Старую аватарку удаляем, чтобы не копились лишние файлы
-      const old = avatarPath;
-      setAvatarPath(path);
-      if (old) await supabase.storage.from('avatars').remove([old]);
-    } catch (e: any) {
-      console.log('[AVATAR] ОШИБКА:', e);
-      Alert.alert('Не удалось сменить фото', String(e?.message ?? e));
-    } finally {
-      setUploading(false);
-    }
+      await Share.share({ message: 'Я в мессенджере: ' + who });
+    } catch {}
   };
 
   const logout = async () => {
@@ -112,108 +67,64 @@ export default function Profile() {
     router.replace('/');
   };
 
+  const name = username || 'Без имени';
+  const birthdayText = formatBirthday(birthday);
+
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.container}
-      keyboardShouldPersistTaps="handled"
-    >
-      <Pressable style={styles.avatarBox} onPress={changeAvatar} disabled={uploading}>
-        <Avatar name={username || '?'} path={avatarPath} size={120} />
-        {uploading && (
-          <View style={styles.avatarOverlay}>
-            <ActivityIndicator color="#fff" />
-          </View>
-        )}
-      </Pressable>
-      <Pressable onPress={changeAvatar} disabled={uploading}>
-        <Text style={styles.changePhoto}>{avatarPath ? 'Изменить фото' : 'Добавить фото'}</Text>
-      </Pressable>
+    <View style={styles.screen}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Avatar name={name} path={avatarPath} size={92} />
 
-      <View style={styles.card}>
-        <Text style={styles.label}>Ваше имя</Text>
-        <TextInput
-          style={styles.input}
-          value={username}
-          onChangeText={setUsername}
-          placeholder="Как вас называть"
-          placeholderTextColor="#9aa0a6"
-          maxLength={40}
-        />
+        <Text style={styles.name}>{name}</Text>
+        {nickname ? <Text style={styles.nick}>@{nickname}</Text> : null}
+        {bio ? <Text style={styles.bio}>{bio}</Text> : null}
+        {birthdayText ? <Text style={styles.joined}>День рождения: {birthdayText}</Text> : null}
+        {joined ? <Text style={styles.joined}>Дата регистрации: {joined}</Text> : null}
 
-        <Text style={styles.label}>Ник (по нему вас найдут)</Text>
-        <View style={[styles.input, { flexDirection: 'row', alignItems: 'center' }]}>
-          <Text style={{ fontSize: 16, color: '#9aa0a6', marginRight: 2 }}>@</Text>
-          <TextInput
-            style={{ flex: 1, fontSize: 16, color: '#111', padding: 0 }}
-            value={nickname}
-            onChangeText={(v) => setNickname(v.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase())}
-            placeholder="nickname"
-            placeholderTextColor="#9aa0a6"
-            autoCapitalize="none"
-            autoCorrect={false}
-            maxLength={20}
-          />
+        <View style={styles.buttons}>
+          <Pressable style={({ pressed }) => [styles.btn, pressed && { opacity: 0.7 }]} onPress={share}>
+            <Text style={styles.btnText}>Поделиться</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.btn, pressed && { opacity: 0.7 }]}
+            onPress={() => router.push('/edit-profile')}
+          >
+            <Text style={styles.btnText}>Изменить профиль</Text>
+          </Pressable>
         </View>
-        <Text style={{ fontSize: 12, color: '#9aa0a6', marginTop: -10, marginBottom: 16 }}>
-          3–20 символов: латинские буквы, цифры и _
-        </Text>Í
 
-        <Text style={styles.label}>О себе (чем занимаетесь)</Text>
-        <TextInput
-          style={[styles.input, styles.bio]}
-          value={bio}
-          onChangeText={setBio}
-          placeholder="Например: студент, делаю мессенджер"
-          placeholderTextColor="#9aa0a6"
-          multiline
-          maxLength={200}
-        />
-        <Text style={styles.counter}>{bio.length}/200</Text>
+        <View style={styles.menu}>
+          <Pressable style={styles.menuRow} onPress={logout}>
+            <Text style={styles.menuDanger}>Выйти из аккаунта</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
 
-        <Pressable style={styles.button} onPress={save}>
-          <Text style={styles.buttonText}>Сохранить</Text>
-        </Pressable>
-      </View>
-
-      <Pressable style={styles.logoutBox} onPress={logout}>
-        <Text style={styles.logout}>Выйти из аккаунта</Text>
-      </Pressable>
-    </ScrollView>
+      <BottomBubble active="profile" />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#f2f4f7' },
-  container: { padding: 24, alignItems: 'stretch' },
-  avatarBox: { alignSelf: 'center', marginTop: 8 },
-  avatarOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 60,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+  screen: { flex: 1, backgroundColor: '#fff' },
+  content: { padding: 16, paddingBottom: 120 },
+  name: { fontSize: 22, fontWeight: '800', color: '#111', marginTop: 14 },
+  nick: { fontSize: 15, color: '#8a8f98', marginTop: 1 },
+  bio: { fontSize: 16, color: '#111', marginTop: 12, lineHeight: 22 },
+  joined: { fontSize: 14, color: '#8a8f98', marginTop: 8 },
+  buttons: { flexDirection: 'row', gap: 10, marginTop: 20 },
+  btn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: '#cfd4da',
+    backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  changePhoto: { color: '#2563eb', fontSize: 16, textAlign: 'center', marginTop: 12, marginBottom: 24 },
-  card: { backgroundColor: '#fff', borderRadius: 14, padding: 16 },
-  label: { fontSize: 13, color: '#6b7280', marginBottom: 6 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d9dde3',
-    borderRadius: 10,
-    padding: 12,
-    fontSize: 16,
-    marginBottom: 16,
-    color: '#111',
-  },
-  bio: { minHeight: 100, textAlignVertical: 'top', marginBottom: 4 },
-  counter: { textAlign: 'right', color: '#9aa0a6', fontSize: 12, marginBottom: 16 },
-  button: { backgroundColor: '#2563eb', padding: 14, borderRadius: 10, alignItems: 'center' },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  logoutBox: { backgroundColor: '#fff', borderRadius: 14, padding: 14, marginTop: 20 },
-  logout: { color: '#dc2626', textAlign: 'center', fontSize: 16 },
+  btnText: { color: '#111', fontSize: 15, fontWeight: '700' },
+  menu: { backgroundColor: '#f2f4f7', borderRadius: 14, marginTop: 32 },
+  menuRow: { paddingVertical: 15, paddingHorizontal: 16 },
+  menuDanger: { fontSize: 16, color: '#dc2626' },
 });

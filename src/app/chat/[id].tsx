@@ -410,9 +410,10 @@ export default function ChatScreen() {
     return () => clearInterval(t);
   }, [recording, sendTyping]);
 
-  // Загрузка истории + realtime
+    // Загрузка истории + realtime
   useEffect(() => {
     let active = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
 
     supabase
       .from('messages')
@@ -426,49 +427,56 @@ export default function ChatScreen() {
         markRead();
       });
 
-    const channel = supabase
-      .channel(`chat-${chatId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages',
-          filter: `chat_id=eq.${chatId}`,
-        },
-        (payload) => {
-          const m = payload.new as Message;
-          setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [m, ...prev]));
-          setTypingKind(null);
-          markRead();
-        }
-      )
-      // Сообщение удалили: убираем его из списка (у удаления нет фильтра по чату, но id уникален)
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, (payload) => {
-        const deletedId = (payload.old as any)?.id;
-        if (deletedId) setMessages((prev) => prev.filter((x) => x.id !== deletedId));
-      })
-      // Собеседник печатает
-      .on('broadcast', { event: 'typing' }, ({ payload }) => {
-        setTypingKind(payload?.kind === 'voice' ? 'voice' : 'text');
-        if (typingTimer.current) clearTimeout(typingTimer.current);
-        typingTimer.current = setTimeout(() => setTypingKind(null), 3500);
-      })
-      // Собеседник прочитал чат
-      .on('broadcast', { event: 'read' }, () => {
-        fetchOtherRead();
-      })
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') markRead();
-      });
-    channelRef.current = channel;
+    (async () => {
+      // Старый канал с таким же именем может ещё закрываться: ждём, пока он удалится
+      const old = supabase.getChannels().filter((c) => c.topic === 'realtime:chat-' + chatId);
+      await Promise.all(old.map((c) => supabase.removeChannel(c)));
+      if (!active) return;
+
+      channel = supabase
+        .channel('chat-' + chatId)
+        .on(
+          'postgres_changes',
+          {
+            event: 'INSERT',
+            schema: 'public',
+            table: 'messages',
+            filter: 'chat_id=eq.' + chatId,
+          },
+          (payload) => {
+            const m = payload.new as Message;
+            setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [m, ...prev]));
+            setTypingKind(null);
+            markRead();
+          }
+        )
+        // Сообщение удалили: убираем его из списка (у удаления нет фильтра по чату, но id уникален)
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, (payload) => {
+          const deletedId = (payload.old as any)?.id;
+          if (deletedId) setMessages((prev) => prev.filter((x) => x.id !== deletedId));
+        })
+        // Собеседник печатает
+        .on('broadcast', { event: 'typing' }, ({ payload }) => {
+          setTypingKind(payload?.kind === 'voice' ? 'voice' : 'text');
+          if (typingTimer.current) clearTimeout(typingTimer.current);
+          typingTimer.current = setTimeout(() => setTypingKind(null), 3500);
+        })
+        // Собеседник прочитал чат
+        .on('broadcast', { event: 'read' }, () => {
+          fetchOtherRead();
+        })
+        .subscribe((status) => {
+          if (status === 'SUBSCRIBED') markRead();
+        });
+      channelRef.current = channel;
+    })();
 
     return () => {
       active = false;
       markChatRead(chatId);
       if (typingTimer.current) clearTimeout(typingTimer.current);
       channelRef.current = null;
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
     };
   }, [chatId, markRead, fetchOtherRead]);
 
