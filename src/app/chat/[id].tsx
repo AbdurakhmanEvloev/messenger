@@ -27,6 +27,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../../components/Avatar';
+import { getChatBg } from '../../lib/chat-bg';
 // Путь к клиенту Supabase: если у вас файл лежит в другом месте, поправьте эту строку
 import { supabase } from '../../lib/supabase';
 
@@ -194,8 +195,8 @@ function VoiceBubble({ path, mine, onLongPress }: { path: string; mine: boolean;
   };
 
   const progress = duration > 0 ? position / duration : 0;
-  const activeColor = mine ? '#7c5cd6' : '#2f80ed';
-  const inactiveColor = mine ? 'rgba(124,92,214,0.35)' : '#b0bec5';
+  const activeColor = mine ? '#fff' : '#2f80ed';
+  const inactiveColor = mine ? 'rgba(255,255,255,0.4)' : '#b0bec5';
 
   return (
     <View style={styles.voiceRow}>
@@ -259,8 +260,8 @@ function MessageMeta({
   onPhoto?: boolean;
   inline?: boolean;
 }) {
-  const timeColor = onPhoto ? '#fff' : mine ? '#7a7585' : '#8a8f98';
-  const tickColor = read ? (onPhoto ? '#6cb2ff' : '#2f80ed') : onPhoto ? '#fff' : '#9a94a8';
+  const timeColor = onPhoto ? '#fff' : mine ? 'rgba(255,255,255,0.75)' : '#8a8f98';
+  const tickColor = onPhoto ? (read ? '#6cb2ff' : '#fff') : mine ? (read ? '#fff' : 'rgba(255,255,255,0.65)') : '#9a94a8';
   return (
     <View
       style={[
@@ -296,6 +297,7 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets(); // отступ снизу, чтобы панель не пряталась под системной кнопкой
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [inputH, setInputH] = useState(64); // высота панели ввода, чтобы список знал, сколько места оставить
   const [messages, setMessages] = useState<Message[]>([]); // новые сверху
   const [text, setText] = useState('');
   const [recording, setRecording] = useState(false);
@@ -304,6 +306,13 @@ export default function ChatScreen() {
   const [otherReadAt, setOtherReadAt] = useState<string | null>(null); // когда собеседник последний раз читал чат
   const [peerAvatar, setPeerAvatar] = useState<string | null>(null);
   const [peerId, setPeerId] = useState<string | null>(null);
+  const [bg, setBg] = useState<string | null>(null);
+
+useEffect(() => {
+  getChatBg().then(setBg);
+}, []);
+  // Блокировка: none — всё хорошо, i_blocked — я заблокировала, blocked_me — меня заблокировали
+  const [blockState, setBlockState] = useState<'none' | 'i_blocked' | 'blocked_me'>('none');
 
   const userIdRef = useRef<string | null>(null);
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -358,6 +367,21 @@ export default function ChatScreen() {
     })();
   }, [chatId]);
 
+  // Проверка блокировки (спрашиваем сервер)
+  const checkBlock = useCallback(async () => {
+    if (!peerId) return;
+    const { data, error } = await supabase.rpc('block_status', { other: peerId });
+    if (error) {
+      console.log('[BLOCK] ошибка:', error.message);
+      return;
+    }
+    setBlockState((data as 'none' | 'i_blocked' | 'blocked_me') ?? 'none');
+  }, [peerId]);
+
+  useEffect(() => {
+    checkBlock();
+  }, [checkBlock]);
+
   // Узнаём, когда собеседник последний раз открывал чат (для галочек «прочитано»)
   const fetchOtherRead = useCallback(async () => {
     const me = userIdRef.current;
@@ -410,7 +434,7 @@ export default function ChatScreen() {
     return () => clearInterval(t);
   }, [recording, sendTyping]);
 
-    // Загрузка истории + realtime
+  // Загрузка истории + realtime
   useEffect(() => {
     let active = true;
     let channel: ReturnType<typeof supabase.channel> | null = null;
@@ -494,8 +518,15 @@ export default function ChatScreen() {
     const { error } = await supabase
       .from('messages')
       .insert({ chat_id: chatId, sender_id: userId, text: value });
-    if (error) Alert.alert('Ошибка', error.message);
-  }, [text, userId, chatId]);
+    if (error) {
+      if (error.message.includes('blocked')) {
+        checkBlock();
+        Alert.alert('Сообщение не отправлено', 'Переписка недоступна: один из вас заблокировал другого.');
+      } else {
+        Alert.alert('Ошибка', error.message);
+      }
+    }
+  }, [text, userId, chatId, checkBlock]);
 
   // Начать запись
   const startRecording = async () => {
@@ -703,29 +734,8 @@ export default function ChatScreen() {
       enabled={false}
       behavior="padding"
     >
-      <Stack.Screen
-        options={{
-          title: name ? String(name) : 'Чат',
-          headerTitle: () => (
-            <Pressable
-              style={styles.headerRow}
-              onPress={() => peerId && router.push(`/user/${peerId}`)}
-            >
-              <Avatar name={name ? String(name) : '?'} path={peerAvatar} size={36} />
-              <View>
-                <Text style={styles.headerName} numberOfLines={1}>
-                  {name ? String(name) : 'Чат'}
-                </Text>
-                {typingKind && (
-                  <Text style={styles.headerTyping}>
-                    {typingKind === 'voice' ? 'записывает голосовое…' : 'печатает…'}
-                  </Text>
-                )}
-              </View>
-            </Pressable>
-          ),
-        }}
-      />
+      <Stack.Screen options={{ headerShown: false }} />
+      {bg && <Image source={{ uri: bg }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
 
       <FlatList
         data={messages}
@@ -733,85 +743,149 @@ export default function ChatScreen() {
         keyExtractor={(m) => m.id}
         renderItem={renderItem}
         extraData={otherReadAt}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingTop: inputH + 8, paddingBottom: insets.top + 70 }]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
       />
 
-      <View style={[styles.inputBar,
-      {
-        backgroundColor: 'transparent',
-        borderTopWidth: 0,
-        paddingBottom: 8 + (Platform.OS === 'ios' && kbVisible ? 0 : insets.bottom),
-      },
-      ]}
-      >
+      <View style={[styles.header, { paddingTop: insets.top + 6 }]} pointerEvents="box-none">
+        <Pressable style={styles.circleBtn} onPress={() => router.back()}>
+          <Text style={styles.circleIcon}>‹</Text>
+        </Pressable>
+
+        <Pressable
+          style={styles.namePill}
+          onPress={() => peerId && router.push(`/user/${peerId}`)}
+        >
+          <Avatar name={name ? String(name) : '?'} path={peerAvatar} size={40} />
+          <View style={{ flex: 1, marginLeft: 10 }}>
+            <Text style={styles.headerName} numberOfLines={1}>
+              {name ? String(name) : 'Чат'}
+            </Text>
+            {typingKind && (
+              <Text style={styles.headerTyping}>
+                {typingKind === 'voice' ? 'записывает голосовое…' : 'печатает…'}
+              </Text>
+            )}
+          </View>
+        </Pressable>
+
+        <Pressable style={styles.circleBtn} onPress={() => Alert.alert('Меню', 'Здесь скоро будут функции')}>
+          <Text style={styles.circleIcon}>⋮</Text>
+        </Pressable>
+      </View>
+
+      {blockState !== 'none' ? (
         <View
           style={{
-            flex: 1,
-            flexDirection: 'row',
-            alignItems: 'flex-end',
             backgroundColor: '#fff',
-            borderRadius: 20,
-            paddingLeft: 14,
-            paddingRight: 2,
+            paddingTop: 14,
+            paddingHorizontal: 20,
+            paddingBottom: 14 + insets.bottom,
+            alignItems: 'center',
           }}
         >
-          <TextInput
-            style={{
-              flex: 1,
-              minHeight: 40,
-              maxHeight: 100,
-              paddingVertical: 8,
-              fontSize: 16,
-              color: '#111',
-              textAlignVertical: 'center',
-            }}
-            value={text}
-            onChangeText={onChangeText}
-            placeholder="Сообщение"
-            placeholderTextColor="#8a8f98"
-            multiline
-          />
-          <Pressable
-            style={{ width: 38, height: 40, alignItems: 'center', justifyContent: 'center' }}
-            onPress={() => pickAndSendPhoto('library')}
-            disabled={sending}
-          >
-            <Image source={require('../../../assets/icons/clip.png')} style={{ width: 24, height: 24, tintColor: '#6b7280' }} />
-          </Pressable>
-          {text.trim().length === 0 && (
-            <Pressable
-              style={{ width: 38, height: 40, alignItems: 'center', justifyContent: 'center' }}
-              onPress={() => pickAndSendPhoto('camera')}
-              disabled={sending || recording}
-            >
-              <Image source={require('../../../assets/icons/camera.png')} style={{ width: 24, height: 24, tintColor: '#6b7280' }} />
+          <Text style={{ fontSize: 15, color: '#6b7280', textAlign: 'center' }}>
+            {blockState === 'i_blocked'
+              ? 'Вы заблокировали этого пользователя. Разблокируйте его в профиле, чтобы писать.'
+              : 'Вы не можете писать этому пользователю.'}
+          </Text>
+          {blockState === 'i_blocked' && peerId && (
+            <Pressable onPress={() => router.push(`/user/${peerId}`)} style={{ marginTop: 8 }}>
+              <Text style={{ fontSize: 15, color: '#2563eb', fontWeight: '600' }}>Открыть профиль</Text>
             </Pressable>
           )}
         </View>
+      ) : (
+        <View
+          onLayout={(e) => setInputH(e.nativeEvent.layout.height)}
+          style={[
+            styles.inputBar,
+            {
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: kbHeight,
+              backgroundColor: 'transparent',
+              borderTopWidth: 0,
+              paddingBottom: 8 + (Platform.OS === 'ios' && kbVisible ? 0 : insets.bottom),
+            },
+          ]}
+        >
+          <View
+            style={{
+              flex: 1,
+              flexDirection: 'row',
+              alignItems: 'flex-end',
+              backgroundColor: 'rgba(255,255,255,0.9)',
+              borderRadius: 22,
 
-        {text.trim().length > 0 ? (
-          <Pressable style={styles.button} onPress={sendText}>
-            <Image source={require('../../../assets/icons/send.png')} style={{ width: 22, height: 22, tintColor: '#fff' }} />
-          </Pressable>
-        ) : (
-          <Pressable
-            style={[styles.button, recording && styles.buttonRecording]}
-            onPress={recording ? stopAndSend : startRecording}
-            disabled={sending}
+              minHeight: 44,
+              paddingLeft: 16,
+              paddingRight: 4,
+              shadowColor: '#000',
+              shadowOpacity: 0.08,
+              shadowRadius: 3,
+              shadowOffset: { width: 0, height: 1 },
+              elevation: 2,
+            }}
           >
-            {recording ? (
-              <Text style={styles.buttonText}>■</Text>
-            ) : (
-              <Image
-                source={require('../../../assets/icons/mic.png')}
-                style={{ width: 22, height: 22, tintColor: '#fff' }}
-              />
+            <TextInput
+              style={{
+                flex: 1,
+                minHeight: 44,
+                maxHeight: 100,
+                paddingVertical: 8,
+                fontSize: 16,
+                color: '#000',
+                textAlignVertical: 'center',
+              }}
+              value={text}
+              onChangeText={onChangeText}
+              placeholder="Сообщение"
+              placeholderTextColor="#000"
+              multiline
+            />
+            <Pressable
+              style={{ width: 38, height: 40, alignItems: 'center', justifyContent: 'center' }}
+              onPress={() => pickAndSendPhoto('library')}
+              disabled={sending}
+            >
+              <Image source={require('../../../assets/icons/clip.png')} style={{ width: 24, height: 24, tintColor: '#000' }} />
+            </Pressable>
+            {text.trim().length === 0 && (
+              <Pressable
+                style={{ width: 38, height: 40, alignItems: 'center', justifyContent: 'center' }}
+                onPress={() => pickAndSendPhoto('camera')}
+                disabled={sending || recording}
+              >
+                <Image source={require('../../../assets/icons/camera.png')} style={{ width: 24, height: 24, tintColor: '#000' }} />
+              </Pressable>
             )}
-          </Pressable>
-        )}
-      </View>
+          </View>
+
+          {text.trim().length > 0 ? (
+            <Pressable style={styles.button} onPress={sendText}>
+              <Image source={require('../../../assets/icons/send.png')} style={{ width: 22, height: 22, tintColor: '#fff' }} />
+            </Pressable>
+          ) : (
+            <Pressable
+              style={[styles.button, recording && styles.buttonRecording]}
+              onPress={recording ? stopAndSend : startRecording}
+              disabled={sending}
+            >
+              {recording ? (
+                <Text style={styles.buttonText}>■</Text>
+              ) : (
+                <Image
+                  source={require('../../../assets/icons/mic.png')}
+                  style={{ width: 22, height: 22, tintColor: '#fff' }}
+                />
+              )}
+            </Pressable>
+          )}
+        </View>
+      )}
 
       {/* iOS: подпорка высотой с клавиатуру, она поднимает панель ввода */}
       <View style={{ height: kbHeight }} />
@@ -821,20 +895,20 @@ export default function ChatScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fce9ef' },
+  container: { flex: 1, backgroundColor: '#fff' },
   list: { padding: 12 },
   row: { flexDirection: 'row', marginVertical: 1 },
   rowGroupEnd: { marginBottom: 6 },
   rowMine: { justifyContent: 'flex-end' },
   rowTheirs: { justifyContent: 'flex-start' },
   bubble: { maxWidth: '80%', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18 },
-  bubbleMine: { backgroundColor: '#e6dcfb' },
-  bubbleTheirs: { backgroundColor: '#ffffff' },
+  bubbleMine: { backgroundColor: '#2f80ed' },
+  bubbleTheirs: { backgroundColor: '#f1f3f4' },
   tailMine: { borderBottomRightRadius: 4 },
   tailTheirs: { borderBottomLeftRadius: 4 },
   bubbleImage: { paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
   msgText: { fontSize: 16, color: '#111' },
-  msgTextMine: { color: '#111' },
+  msgTextMine: { color: '#fff' },
   msgTime: { alignSelf: 'flex-end', fontSize: 11, color: '#8a8f98', marginTop: 2, marginRight: 2 },
   msgTimeMine: { color: '#7a7585' },
   textRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end' },
@@ -857,6 +931,46 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerName: { fontSize: 17, fontWeight: '700', color: '#111' },
   headerTyping: { fontSize: 12, color: '#2563eb' },
+  header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingBottom: 6,
+    gap: 8,
+  },
+  circleBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
+  circleIcon: { fontSize: 30, color: '#4b5563', lineHeight: 34 },
+  namePill: {
+    flex: 1,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 5,
+    paddingRight: 14,
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
+  },
   dateChip: {
     alignSelf: 'center',
     backgroundColor: 'rgba(0,0,0,0.28)',
@@ -885,14 +999,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   button: {
-    width: 40,
-    height: 40,
+    width: 44,
+    height: 44,
     marginLeft: 8,
-    borderRadius: 20,
+    borderRadius: 22,
     backgroundColor: '#2f80ed',
     alignItems: 'center',
     justifyContent: 'center',
   },
+
   buttonRecording: { backgroundColor: '#e53935' },
   buttonText: { color: '#fff', fontSize: 18 },
   voiceRow: { flexDirection: 'row', alignItems: 'center', minWidth: 190 },
@@ -904,10 +1019,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
-  playBtnMine: { backgroundColor: '#7c5cd6' },
+  playBtnMine: { backgroundColor: '#fff' },
   playBtnTheirs: { backgroundColor: '#2f80ed' },
   playIcon: { fontSize: 13 },
-  playIconMine: { color: '#fff' },
+  playIconMine: { color: '#2f80ed' },
   playIconTheirs: { color: '#fff' },
   wave: { flexDirection: 'row', alignItems: 'center', height: 24, flex: 1 },
   voiceTime: { fontSize: 12, color: '#555', marginLeft: 8, minWidth: 32 },

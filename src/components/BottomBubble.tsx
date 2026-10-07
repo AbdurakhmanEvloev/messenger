@@ -48,7 +48,7 @@ const styles = StyleSheet.create({
   wrap: { position: 'absolute', left: 16, right: 16 },
   bubble: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.97)',
+    backgroundColor: 'rgba(255,255,255,0.9)',
     borderRadius: 30,
     padding: 4,
     elevation: 3,
