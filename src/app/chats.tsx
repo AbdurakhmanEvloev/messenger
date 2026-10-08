@@ -1,7 +1,7 @@
 // src/app/chats.tsx — список чатов (поиск + три точки в шапке)
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import BottomBubble from '../components/BottomBubble';
@@ -80,6 +80,57 @@ export default function Chats() {
     }, [load])
   );
 
+  // Удалить файлы (голосовые и фото) из хранилища
+  const removeFiles = async (files: { audio_path: string | null; image_path: string | null }[]) => {
+    const voice = files.map((f) => f.audio_path).filter(Boolean) as string[];
+    const photos = files.map((f) => f.image_path).filter(Boolean) as string[];
+    if (voice.length) await supabase.storage.from('voice').remove(voice);
+    if (photos.length) await supabase.storage.from('photos').remove(photos);
+  };
+
+  // action: 'clear' очищает чат, 'delete' удаляет чат целиком
+  const runChatAction = async (chatId: string, action: 'clear' | 'delete') => {
+    const { data: files } = await supabase
+      .from('messages')
+      .select('audio_path, image_path')
+      .eq('chat_id', chatId);
+
+    const { error: err } = await supabase.rpc(action === 'clear' ? 'clear_chat' : 'delete_chat', {
+      p_chat_id: chatId,
+    });
+    if (err) {
+      Alert.alert(action === 'clear' ? 'Не удалось очистить чат' : 'Не удалось удалить чат', err.message);
+      return;
+    }
+    await removeFiles(files ?? []);
+    load();
+  };
+
+  // Меню по долгому нажатию на чат
+  const openChatMenu = (item: ChatRow) => {
+    const title = item.username || 'Без имени';
+    Alert.alert(title, undefined, [
+      {
+        text: 'Очистить чат',
+        onPress: () =>
+          Alert.alert('Очистить чат?', 'Все сообщения исчезнут у вас и у собеседника.', [
+            { text: 'Отмена', style: 'cancel' },
+            { text: 'Очистить', style: 'destructive', onPress: () => runChatAction(item.chat_id, 'clear') },
+          ]),
+      },
+      {
+        text: 'Удалить чат',
+        style: 'destructive',
+        onPress: () =>
+          Alert.alert('Удалить чат?', 'Чат и вся переписка исчезнут у вас и у собеседника.', [
+            { text: 'Отмена', style: 'cancel' },
+            { text: 'Удалить', style: 'destructive', onPress: () => runChatAction(item.chat_id, 'delete') },
+          ]),
+      },
+      { text: 'Отмена', style: 'cancel' },
+    ]);
+  };
+
   const onRefresh = async () => {
     setRefreshing(true);
     await load();
@@ -90,10 +141,10 @@ export default function Chats() {
   const q = query.trim().toLowerCase();
   const shown = q
     ? chats.filter(
-      (c) =>
-        (c.username ?? '').toLowerCase().includes(q) ||
-        (c.last_text ?? '').toLowerCase().includes(q)
-    )
+        (c) =>
+          (c.username ?? '').toLowerCase().includes(q) ||
+          (c.last_text ?? '').toLowerCase().includes(q)
+      )
     : chats;
 
   const renderItem = ({ item }: { item: ChatRow }) => {
@@ -106,6 +157,8 @@ export default function Chats() {
       <Pressable
         style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
         onPress={() => router.push(`/chat/${item.chat_id}?name=${encodeURIComponent(name)}`)}
+        onLongPress={() => openChatMenu(item)}
+        delayLongPress={350}
       >
         <Avatar name={name} path={item.avatar_path} size={54} />
 
@@ -180,9 +233,6 @@ export default function Chats() {
         }
       />
       <BottomBubble active="chats" />
-      
-
-      
     </View>
   );
 }
@@ -225,4 +275,4 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontWeight: '600', color: '#222', marginBottom: 6 },
   emptyText: { fontSize: 15, color: '#8a8f98', textAlign: 'center' },
-  });
+});
