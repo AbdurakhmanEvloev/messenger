@@ -9,15 +9,17 @@ import {
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   FlatList,
   Image,
   Keyboard,
   KeyboardAvoidingView,
   LayoutAnimation,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   StyleSheet,
@@ -39,6 +41,8 @@ type Message = {
   audio_path: string | null;
   image_path: string | null;
   created_at: string;
+  reply_to: string | null;
+  edited_at: string | null;
 };
 
 // Отметить чат прочитанным: от этого зависит счётчик непрочитанных в списке чатов
@@ -297,6 +301,63 @@ function MessageMeta({
   );
 }
 
+
+function previewOf(m: Message) {
+  if (m.image_path) return '📷 Фото';
+  if (m.audio_path) return '🎤 Голосовое';
+  return m.text ?? '';
+}
+
+function SwipeToReply({ children, onReply }: { children: ReactNode; onReply: () => void }) {
+  const x = useRef(new Animated.Value(0)).current;
+  const fired = useRef(false);
+  const cb = useRef(onReply);
+  cb.current = onReply;
+
+  const reset = () => {
+    fired.current = false;
+    Animated.spring(x, { toValue: 0, useNativeDriver: true }).start();
+  };
+
+  const pan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => g.dx > 12 && Math.abs(g.dx) > Math.abs(g.dy) * 2,
+      onPanResponderTerminationRequest: () => false,
+      onPanResponderMove: (_, g) => {
+        const dx = Math.max(0, Math.min(g.dx, 70));
+        x.setValue(dx);
+        if (dx >= 60) fired.current = true;
+      },
+      onPanResponderRelease: () => {
+        if (fired.current) cb.current();
+        reset();
+      },
+      onPanResponderTerminate: reset,
+    })
+  ).current;
+
+  return (
+    <View>
+      <Animated.View
+        style={{
+          position: 'absolute',
+          left: 10,
+          top: 0,
+          bottom: 0,
+          justifyContent: 'center',
+          opacity: x.interpolate({ inputRange: [0, 60], outputRange: [0, 1] }),
+        }}
+      >
+        <Text style={{ fontSize: 22, color: '#8a8f98' }}>↩</Text>
+      </Animated.View>
+      <Animated.View style={{ transform: [{ translateX: x }] }} {...pan.panHandlers}>
+        {children}
+      </Animated.View>
+    </View>
+  );
+}
+
+
 // ---------- Экран чата ----------
 export default function ChatScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
@@ -308,6 +369,7 @@ export default function ChatScreen() {
   const [inputH, setInputH] = useState(64); // высота панели ввода, чтобы список знал, сколько места оставить
   const [messages, setMessages] = useState<Message[]>([]); // новые сверху
   const [text, setText] = useState('');
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [recording, setRecording] = useState(false);
   const [sending, setSending] = useState(false);
   const [typingKind, setTypingKind] = useState<null | 'text' | 'voice'>(null); // собеседник печатает / записывает
@@ -542,7 +604,8 @@ export default function ChatScreen() {
     setText('');
     const { error } = await supabase
       .from('messages')
-      .insert({ chat_id: chatId, sender_id: userId, text: value });
+      .insert({ chat_id: chatId, sender_id: userId, text: value, reply_to: replyTo?.id ?? null });
+    setReplyTo(null);
     if (error) {
       if (error.message.includes('blocked')) {
         checkBlock();
@@ -715,40 +778,53 @@ export default function ChatScreen() {
             <Text style={styles.dateChipText}>{dayLabel(item.created_at)}</Text>
           </View>
         )}
-        <View
-          style={[
-            styles.row,
-            mine ? styles.rowMine : styles.rowTheirs,
-            !groupedWithNewer && styles.rowGroupEnd,
-          ]}
-        >
-          <Pressable
-            onLongPress={onLongPress}
-            delayLongPress={350}
+        <SwipeToReply onReply={() => setReplyTo(item)}>
+          <View
             style={[
-              styles.bubble,
-              mine ? styles.bubbleMine : styles.bubbleTheirs,
-              isImage && styles.bubbleImage,
-              !mine && firstInGroup && styles.tailFirst,
+              styles.row,
+              mine ? styles.rowMine : styles.rowTheirs,
+              !groupedWithNewer && styles.rowGroupEnd,
             ]}
           >
-            {item.image_path ? (
-              <ImageBubble path={item.image_path} onLongPress={onLongPress} />
-            ) : item.audio_path ? (
-              <VoiceBubble path={item.audio_path} mine={mine} onLongPress={onLongPress} />
-            ) : (
-              <View style={styles.textRow}>
-                <Text style={[styles.msgText, mine && styles.msgTextMine, { flexShrink: 1 }]}>
-                  {item.text}
-                </Text>
-                <MessageMeta time={timeOf(item.created_at)} mine={mine} read={isRead} inline />
-              </View>
-            )}
-            {(isImage || !!item.audio_path) && (
-              <MessageMeta time={timeOf(item.created_at)} mine={mine} read={isRead} onPhoto={isImage} />
-            )}
-          </Pressable>
-        </View>
+            <Pressable
+              onLongPress={onLongPress}
+              delayLongPress={350}
+              style={[
+                styles.bubble,
+                mine ? styles.bubbleMine : styles.bubbleTheirs,
+                isImage && styles.bubbleImage,
+                !mine && firstInGroup && styles.tailFirst,
+              ]}
+            >
+              {item.reply_to && (
+                <View style={[styles.quote, mine ? styles.quoteMine : styles.quoteTheirs, isImage && { margin: 6 }]}>
+                  <Text style={styles.quoteText} numberOfLines={2}>
+                    {(() => {
+                      const orig = messages.find((x) => x.id === item.reply_to);
+                      return orig ? previewOf(orig) : 'Сообщение удалено';
+                    })()}
+                  </Text>
+                </View>
+              )}
+              {item.image_path ? (
+                <ImageBubble path={item.image_path} onLongPress={onLongPress} />
+              ) : item.audio_path ? (
+                <VoiceBubble path={item.audio_path} mine={mine} onLongPress={onLongPress} />
+              ) : (
+                <View style={styles.textRow}>
+                  <Text style={[styles.msgText, mine && styles.msgTextMine, { flexShrink: 1 }]}>
+                    {item.text}
+                  </Text>
+                  <MessageMeta time={timeOf(item.created_at)} mine={mine} read={isRead} inline />
+                </View>
+              )}
+              {(isImage || !!item.audio_path) && (
+                <MessageMeta time={timeOf(item.created_at)} mine={mine} read={isRead} onPhoto={isImage} />
+              )}
+            </Pressable>
+
+          </View>
+        </SwipeToReply>
       </View>
     );
   };
@@ -763,6 +839,9 @@ export default function ChatScreen() {
       {bg && <Image source={{ uri: bg }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
 
       <FlatList
+        bounces
+        alwaysBounceVertical
+        overScrollMode="always"
         data={messages}
         inverted
         keyExtractor={(m) => m.id}
@@ -775,7 +854,10 @@ export default function ChatScreen() {
 
       <View style={[styles.header, { paddingTop: insets.top + 6 }]} pointerEvents="box-none">
         <Pressable style={styles.circleBtn} onPress={() => router.back()}>
-          <Text style={styles.circleIcon}>‹</Text>
+          <Image
+            source={require('../../../assets/icons/back.png')}
+            style={{ width: 22, height: 22, tintColor: '#111' }}
+          />
         </Pressable>
 
         <Pressable
@@ -801,8 +883,21 @@ export default function ChatScreen() {
           </View>
         </Pressable>
 
+        <Pressable
+          style={styles.circleBtn}
+          onPress={() => Alert.alert('Скоро', 'Звонки скоро появятся')}
+        >
+          <Image
+            source={require('../../../assets/icons/phon.png')}
+            style={{ width: 22, height: 22, tintColor: '#111' }}
+          />
+        </Pressable>
+
         <Pressable style={styles.circleBtn} onPress={() => Alert.alert('Меню', 'Здесь скоро будут функции')}>
-          <Text style={styles.circleIcon}>⋮</Text>
+          <Image
+            source={require('../../../assets/icons/menu.png')}
+            style={{ width: 22, height: 22, tintColor: '#111' }}
+          />
         </Pressable>
       </View>
 
@@ -843,6 +938,18 @@ export default function ChatScreen() {
             },
           ]}
         >
+          {replyTo && (
+            <View style={[styles.replyBar, { bottom: inputH + 4, marginBottom: 0, zIndex: 10, elevation: 10 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.replyTitle}>Ответ</Text>
+                <Text style={styles.replyText} numberOfLines={1}>{previewOf(replyTo)}</Text>
+              </View>
+              <Pressable onPress={() => setReplyTo(null)} hitSlop={10}>
+                <Text style={{ fontSize: 20, color: '#8a8f98' }}>✕</Text>
+              </Pressable>
+            </View>
+          )}
+
           <View
             style={{
               flex: 1,
@@ -1013,6 +1120,28 @@ const styles = StyleSheet.create({
     marginVertical: 10,
   },
   dateChipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  quote: { borderLeftWidth: 3, paddingLeft: 8, paddingVertical: 2, marginBottom: 4 },
+  quoteMine: { borderLeftColor: '#222423' },
+  quoteTheirs: { borderLeftColor: '#2f80ed' },
+  quoteText: { fontSize: 13, color: '#070707' },
+  replyBar: {
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    bottom: '100%',
+    marginBottom: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderLeftWidth: 3,
+    borderLeftColor: '#2f80ed',
+  },
+  replyTitle: { fontSize: 12, fontWeight: '700', color: '#2f80ed' },
+  replyText: { fontSize: 14, color: '#555' },
+
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
