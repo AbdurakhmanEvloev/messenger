@@ -1,7 +1,8 @@
-// src/app/profile.tsx — мой профиль в стиле X
+// src/app/profile.tsx — мой профиль
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import BottomBubble from '../components/BottomBubble';
 import { supabase } from '../lib/supabase';
@@ -17,8 +18,24 @@ function formatBirthday(s: string | null) {
   });
 }
 
+// Строка внутри серого блока: слева подпись, справа значение
+function InfoRow({ label, value, last }: { label: string; value: string; last?: boolean }) {
+  return (
+    <>
+      <View style={styles.infoRow}>
+        <Text style={styles.infoLabel}>{label}</Text>
+        <Text style={styles.infoValue} numberOfLines={1}>
+          {value}
+        </Text>
+      </View>
+      {!last && <View style={styles.line} />}
+    </>
+  );
+}
+
 export default function Profile() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [username, setUsername] = useState('');
   const [nickname, setNickname] = useState('');
   const [bio, setBio] = useState('');
@@ -31,26 +48,53 @@ export default function Profile() {
     useCallback(() => {
       (async () => {
         const { data } = await supabase.auth.getUser();
-        if (!data.user) return;
+        const user = data.user;
+        if (!user) return;
+
         setJoined(
-          new Date(data.user.created_at).toLocaleDateString('ru-RU', {
+          new Date(user.created_at).toLocaleDateString('ru-RU', {
             day: 'numeric',
             month: 'long',
             year: 'numeric',
           }),
         );
+
         const { data: p } = await supabase
           .from('profiles')
           .select('username, avatar_path, bio, nickname, birthday')
-          .eq('id', data.user.id)
-          .single();
-        if (p) {
-          setUsername(p.username ?? '');
-          setAvatarPath(p.avatar_path ?? null);
-          setBio(p.bio ?? '');
-          setNickname(p.nickname ?? '');
-          setBirthday(p.birthday ?? null);
+          .eq('id', user.id)
+          .maybeSingle();
+
+        // Имя и ник, введённые при регистрации, лежат в данных аккаунта
+        const meta = (user.user_metadata ?? {}) as Record<string, any>;
+        const metaName = typeof meta.username === 'string' ? meta.username.trim() : '';
+        const metaNick = typeof meta.nickname === 'string' ? meta.nickname.trim() : '';
+
+        let uname: string = p?.username ?? '';
+        let nick: string = p?.nickname ?? '';
+
+        // Если в профиле пусто или стоит почта, подставляем имя и ник из регистрации
+        const nameIsDefault = !uname || uname.includes('@') || uname === user.email;
+        const patch: { id: string; username?: string; nickname?: string } = { id: user.id };
+
+        if (nameIsDefault && metaName) {
+          uname = metaName;
+          patch.username = metaName;
         }
+        if (!nick && metaNick) {
+          nick = metaNick;
+          patch.nickname = metaNick;
+        }
+        if (patch.username || patch.nickname) {
+          const { error } = await supabase.from('profiles').upsert(patch);
+          if (error) console.log('[PROFILE] не удалось обновить профиль:', error.message);
+        }
+
+        setUsername(uname);
+        setNickname(nick);
+        setAvatarPath(p?.avatar_path ?? null);
+        setBio(p?.bio ?? '');
+        setBirthday(p?.birthday ?? null);
       })();
     }, []),
   );
@@ -117,33 +161,51 @@ export default function Profile() {
 
   return (
     <View style={styles.screen}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Avatar name={name} path={avatarPath} size={92} />
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 24 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Шапка: аватар, имя, ник */}
+        <View style={styles.header}>
+          <Avatar name={name} path={avatarPath} size={96} />
+          <Text style={styles.name}>{name}</Text>
+          {nickname ? <Text style={styles.nick}>@{nickname}</Text> : null}
+          {bio ? <Text style={styles.bio}>{bio}</Text> : null}
+        </View>
 
-        <Text style={styles.name}>{name}</Text>
-        {nickname ? <Text style={styles.nick}>@{nickname}</Text> : null}
-        {bio ? <Text style={styles.bio}>{bio}</Text> : null}
-        {birthdayText ? <Text style={styles.joined}>День рождения: {birthdayText}</Text> : null}
-        {joined ? <Text style={styles.joined}>Дата регистрации: {joined}</Text> : null}
-
+        {/* Кнопки */}
         <View style={styles.buttons}>
-          <Pressable style={({ pressed }) => [styles.btn, pressed && { opacity: 0.7 }]} onPress={share}>
-            <Text style={styles.btnText}>Поделиться</Text>
+          <Pressable style={({ pressed }) => [styles.btnOutline, pressed && { opacity: 0.7 }]} onPress={share}>
+            <Text style={styles.btnOutlineText}>Поделиться</Text>
           </Pressable>
           <Pressable
-            style={({ pressed }) => [styles.btn, pressed && { opacity: 0.7 }]}
+            style={({ pressed }) => [styles.btnFilled, pressed && { opacity: 0.75 }]}
             onPress={() => router.push('/edit-profile')}
           >
-            <Text style={styles.btnText}>Изменить профиль</Text>
+            <Text style={styles.btnFilledText}>Изменить профиль</Text>
           </Pressable>
         </View>
 
-        <View style={styles.menu}>
-          <Pressable style={styles.menuRow} onPress={logout}>
+        {/* Информация */}
+        {(birthdayText || joined) && (
+          <View style={styles.card}>
+            {birthdayText ? (
+              <InfoRow label="День рождения" value={birthdayText} last={!joined} />
+            ) : null}
+            {joined ? <InfoRow label="Регистрация" value={joined} last /> : null}
+          </View>
+        )}
+
+        {/* Меню */}
+        <View style={styles.card}>
+          <Pressable style={({ pressed }) => [styles.menuRow, pressed && styles.menuRowPressed]} onPress={logout}>
             <Text style={styles.menuText}>Выйти из аккаунта</Text>
           </Pressable>
-          <View style={styles.menuLine} />
-          <Pressable style={styles.menuRow} onPress={deleteAccount}>
+          <View style={styles.line} />
+          <Pressable
+            style={({ pressed }) => [styles.menuRow, pressed && styles.menuRowPressed]}
+            onPress={deleteAccount}
+          >
             <Text style={styles.menuDanger}>Удалить аккаунт</Text>
           </Pressable>
         </View>
@@ -156,26 +218,51 @@ export default function Profile() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: '#fff' },
-  content: { padding: 16, paddingBottom: 120 },
-  name: { fontSize: 22, fontWeight: '800', color: '#111', marginTop: 14 },
-  nick: { fontSize: 15, color: '#8a8f98', marginTop: 1 },
-  bio: { fontSize: 16, color: '#111', marginTop: 12, lineHeight: 22 },
-  joined: { fontSize: 14, color: '#8a8f98', marginTop: 8 },
-  buttons: { flexDirection: 'row', gap: 10, marginTop: 20 },
-  btn: {
+  content: { paddingHorizontal: 20, paddingBottom: 120 },
+
+  header: { alignItems: 'center' },
+  name: { fontSize: 24, fontWeight: '800', color: '#111', marginTop: 14, textAlign: 'center' },
+  nick: { fontSize: 15, color: '#8a8f98', marginTop: 2 },
+  bio: { fontSize: 15, color: '#333', marginTop: 12, lineHeight: 21, textAlign: 'center' },
+
+  buttons: { flexDirection: 'row', gap: 10, marginTop: 22, marginBottom: 20 },
+  btnOutline: {
     flex: 1,
-    height: 42,
-    borderRadius: 21,
+    height: 46,
+    borderRadius: 23,
     borderWidth: 1,
     borderColor: '#cfd4da',
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  btnText: { color: '#111', fontSize: 15, fontWeight: '700' },
-  menu: { backgroundColor: '#f2f4f7', borderRadius: 14, marginTop: 32 },
+  btnOutlineText: { color: '#111', fontSize: 15, fontWeight: '700' },
+  btnFilled: {
+    flex: 1,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#2563eb',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnFilledText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+  // Серые блоки со строками
+  card: { backgroundColor: '#f2f4f7', borderRadius: 14, marginBottom: 16, overflow: 'hidden' },
+  line: { height: StyleSheet.hairlineWidth, backgroundColor: '#d9dde3', marginLeft: 16 },
+
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    minHeight: 52,
+  },
+  infoLabel: { fontSize: 16, color: '#111', fontWeight: '500' },
+  infoValue: { fontSize: 16, color: '#8a8f98', marginLeft: 16, flexShrink: 1 },
+
   menuRow: { paddingVertical: 15, paddingHorizontal: 16 },
-  menuLine: { height: StyleSheet.hairlineWidth, backgroundColor: '#d9dde3', marginLeft: 16 },
+  menuRowPressed: { backgroundColor: '#e8ebef' },
   menuText: { fontSize: 16, color: '#111' },
   menuDanger: { fontSize: 16, color: '#dc2626' },
 });
