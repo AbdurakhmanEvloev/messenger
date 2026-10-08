@@ -1,7 +1,10 @@
 import { Stack } from 'expo-router';
 import { Alert, Image, Pressable, Text, View } from 'react-native';
+import { usePresence } from '../lib/presence';
 
 export default function Layout() {
+  usePresence();
+  
   return (
     <Stack
       screenOptions={({ navigation }) => ({
@@ -51,7 +54,7 @@ export default function Layout() {
         }}
       />
       <Stack.Screen name="profile" options={{ title: 'Профиль' }} />
-            <Stack.Screen name="edit-profile" options={{ title: 'Изменить профиль' }} />
+      <Stack.Screen name="edit-profile" options={{ title: 'Изменить профиль' }} />
       <Stack.Screen name="user/[id]" options={{ title: 'Профиль' }} />
     </Stack>
   );

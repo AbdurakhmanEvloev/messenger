@@ -69,6 +69,14 @@ function timeOf(iso: string) {
   const d = new Date(iso);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
+function formatLastSeen(iso: string | null) {
+  if (!iso) return '';
+  if (Date.now() - new Date(iso).getTime() < 70_000) return 'в сети';
+  const label = dayLabel(iso);
+  if (label === 'Сегодня') return `был(а) в ${timeOf(iso)}`;
+  if (label === 'Вчера') return `был(а) вчера в ${timeOf(iso)}`;
+  return `был(а) ${label}`;
+}
 
 // ---------- Пузырь с фото ----------
 const PHOTO_MAX_W = 240;
@@ -306,11 +314,12 @@ export default function ChatScreen() {
   const [otherReadAt, setOtherReadAt] = useState<string | null>(null); // когда собеседник последний раз читал чат
   const [peerAvatar, setPeerAvatar] = useState<string | null>(null);
   const [peerId, setPeerId] = useState<string | null>(null);
+  const [peerLastSeen, setPeerLastSeen] = useState<string | null>(null);
   const [bg, setBg] = useState<string | null>(null);
 
-useEffect(() => {
-  getChatBg().then(setBg);
-}, []);
+  useEffect(() => {
+    getChatBg().then(setBg);
+  }, []);
   // Блокировка: none — всё хорошо, i_blocked — я заблокировала, blocked_me — меня заблокировали
   const [blockState, setBlockState] = useState<'none' | 'i_blocked' | 'blocked_me'>('none');
 
@@ -366,6 +375,22 @@ useEffect(() => {
       setPeerId((data as any)?.user_id ?? null);
     })();
   }, [chatId]);
+
+  // Последняя активность собеседника (обновляем раз в 30 секунд)
+  useEffect(() => {
+    if (!peerId) return;
+    let active = true;
+    const loadSeen = async () => {
+      const { data } = await supabase.from('profiles').select('last_seen').eq('id', peerId).single();
+      if (active) setPeerLastSeen(data?.last_seen ?? null);
+    };
+    loadSeen();
+    const t = setInterval(loadSeen, 30000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, [peerId]);
 
   // Проверка блокировки (спрашиваем сервер)
   const checkBlock = useCallback(async () => {
@@ -762,10 +787,16 @@ useEffect(() => {
             <Text style={styles.headerName} numberOfLines={1}>
               {name ? String(name) : 'Чат'}
             </Text>
-            {typingKind && (
+            {typingKind ? (
               <Text style={styles.headerTyping}>
                 {typingKind === 'voice' ? 'записывает голосовое…' : 'печатает…'}
               </Text>
+            ) : (
+              !!peerLastSeen && (
+                <Text style={[styles.headerSeen, formatLastSeen(peerLastSeen) === 'в сети' && styles.headerOnline]}>
+                  {formatLastSeen(peerLastSeen)}
+                </Text>
+              )
             )}
           </View>
         </Pressable>
@@ -931,6 +962,8 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerName: { fontSize: 17, fontWeight: '700', color: '#111' },
   headerTyping: { fontSize: 12, color: '#2563eb' },
+  headerSeen: { fontSize: 12, color: '#8a8f98' },
+  headerOnline: { color: '#2563eb' },
   header: {
     position: 'absolute',
     top: 0,
