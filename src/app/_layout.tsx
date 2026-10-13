@@ -1,11 +1,14 @@
 import { Stack } from 'expo-router';
 import { Alert, Image, Pressable, Text, View } from 'react-native';
+import IncomingCallListener from '../components/IncomingCallListener';
 import { usePresence } from '../lib/presence';
 
 export default function Layout() {
   usePresence();
   
   return (
+    <>
+    <IncomingCallListener />
     <Stack
       screenOptions={({ navigation }) => ({
         headerLeft: () =>
@@ -56,6 +59,8 @@ export default function Layout() {
       <Stack.Screen name="profile" options={{ title: 'Профиль' }} />
       <Stack.Screen name="edit-profile" options={{ title: 'Изменить профиль' }} />
       <Stack.Screen name="user/[id]" options={{ title: 'Профиль' }} />
+      <Stack.Screen name="call/[id]" options={{ headerShown: false, gestureEnabled: false }} />
     </Stack>
+    </>
   );
 }

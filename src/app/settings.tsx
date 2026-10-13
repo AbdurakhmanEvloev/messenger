@@ -1,13 +1,12 @@
+// src/app/settings.tsx — настройки
 import { useRouter } from 'expo-router';
-import { Alert, Pressable, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import BottomBubble from '../components/BottomBubble';
 
 export default function Settings() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
 
-  const soon = () => Alert.alert('Скоро', 'Этот раздел скоро появится');
+  const soon = () => Alert.alert('Скоро', 'Этот раздел появится позже');
 
   const items = [
     { title: 'Настройки чатов', onPress: () => router.push('/chat-settings') },
@@ -17,41 +16,50 @@ export default function Settings() {
   ];
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#fff', paddingTop: insets.top + 16 }}>
-      <Text style={{ fontSize: 28, fontWeight: '700', color: '#111', paddingHorizontal: 16, marginBottom: 12 }}>
-        Настройки
-      </Text>
+    <View style={styles.screen}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <Text allowFontScaling={false} style={styles.title}>
+          Настройки
+        </Text>
 
-      <View
-        style={{
-          marginHorizontal: 16,
-          backgroundColor: '#f4f5f7',
-          borderRadius: 16,
-          overflow: 'hidden',
-        }}
-      >
-        {items.map((item, i) => (
-          <Pressable
-            key={item.title}
-            onPress={item.onPress}
-            style={({ pressed }) => ({
-              paddingHorizontal: 16,
-              paddingVertical: 16,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              backgroundColor: pressed ? '#e9ebef' : 'transparent',
-              borderTopWidth: i === 0 ? 0 : 0.5,
-              borderTopColor: '#cfd4da',
-            })}
-          >
-            <Text style={{ fontSize: 17, color: '#111' }}>{item.title}</Text>
-            <Text style={{ fontSize: 22, color: '#8a8f98' }}>›</Text>
-          </Pressable>
-        ))}
-      </View>
+        <View style={styles.menu}>
+          {items.map((item, i) => (
+            <View key={item.title}>
+              {i > 0 ? <View style={styles.line} /> : null}
+              <Pressable
+                style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
+                onPress={item.onPress}
+              >
+                <Text allowFontScaling={false} style={styles.rowText}>
+                  {item.title}
+                </Text>
+                <Text allowFontScaling={false} style={styles.chevron}>
+                  ›
+                </Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
 
       <BottomBubble active="settings" />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: '#fff' },
+  content: { padding: 16, paddingTop: 36, paddingBottom: 120 },
+  title: { fontSize: 28, fontWeight: '800', color: '#111', marginBottom: 14 },
+  menu: { backgroundColor: '#f3f4f7', borderRadius: 20, overflow: 'hidden' },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 15,
+    paddingHorizontal: 16,
+  },
+  rowText: { fontSize: 16, color: '#111' },
+  chevron: { fontSize: 22, color: '#8a8f98', lineHeight: 22 },
+  line: { height: StyleSheet.hairlineWidth, backgroundColor: '#d9dde3' },
+});

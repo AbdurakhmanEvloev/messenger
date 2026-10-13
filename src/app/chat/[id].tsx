@@ -31,6 +31,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../../components/Avatar';
 import { getChatBg } from '../../lib/chat-bg';
 // Путь к клиенту Supabase: если у вас файл лежит в другом месте, поправьте эту строку
+import { friendlyCallError, startCall } from '../../lib/calls';
 import { supabase } from '../../lib/supabase';
 
 type Message = {
@@ -376,6 +377,7 @@ export default function ChatScreen() {
   const [otherReadAt, setOtherReadAt] = useState<string | null>(null); // когда собеседник последний раз читал чат
   const [peerAvatar, setPeerAvatar] = useState<string | null>(null);
   const [peerId, setPeerId] = useState<string | null>(null);
+  const [calling, setCalling] = useState(false);
   const [peerLastSeen, setPeerLastSeen] = useState<string | null>(null);
   const [bg, setBg] = useState<string | null>(null);
 
@@ -749,6 +751,24 @@ export default function ChatScreen() {
     if (m.image_path) await supabase.storage.from('photos').remove([m.image_path]);
   };
 
+  // Позвонить собеседнику (голосовой звонок)
+  const startVoiceCall = async () => {
+    if (calling) return;
+    if (blockState !== 'none') {
+      Alert.alert('Звонок недоступен', 'Один из вас заблокировал другого.');
+      return;
+    }
+    setCalling(true);
+    try {
+      const callId = await startCall(chatId);
+      router.push(`/call/${callId}` as any);
+    } catch (e: any) {
+      Alert.alert('Не удалось позвонить', friendlyCallError(String(e?.message ?? e)));
+    } finally {
+      setCalling(false);
+    }
+  };
+
   const confirmDelete = (m: Message) => {
     Alert.alert('Удалить сообщение?', 'Оно исчезнет и у собеседника.', [
       { text: 'Отмена', style: 'cancel' },
@@ -883,10 +903,7 @@ export default function ChatScreen() {
           </View>
         </Pressable>
 
-        <Pressable
-          style={styles.circleBtn}
-          onPress={() => Alert.alert('Скоро', 'Звонки скоро появятся')}
-        >
+        <Pressable style={styles.circleBtn} onPress={startVoiceCall} disabled={calling}>
           <Image
             source={require('../../../assets/icons/phon.png')}
             style={{ width: 22, height: 22, tintColor: '#111' }}

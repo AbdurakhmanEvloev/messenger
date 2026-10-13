@@ -1,0 +1,346 @@
+// src/app/call/[id].tsx — экран голосового звонка (исходящий, входящий и разговор)
+import { AudioSession, registerGlobals } from '@livekit/react-native';
+import { AudioModule } from 'expo-audio';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { Room, RoomEvent } from 'livekit-client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Alert, BackHandler, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Avatar from '../../components/Avatar';
+import { CallRow, CallStatus, fetchCallToken, friendlyCallError, setCallStatus } from '../../lib/calls';
+import { supabase } from '../../lib/supabase';
+
+registerGlobals();
+
+type Phase = 'loading' | 'ringing' | 'connecting' | 'live' | 'ended';
+
+function fmt(sec: number) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+export default function CallScreen() {
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const callId = String(id);
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
+
+  const [phase, setPhase] = useState<Phase>('loading');
+  const [role, setRole] = useState<'caller' | 'callee'>('caller');
+  const [peerName, setPeerName] = useState('');
+  const [peerAvatar, setPeerAvatar] = useState<string | null>(null);
+  const [note, setNote] = useState(''); // «Нет ответа», «Звонок завершён» и т.п.
+  const [muted, setMuted] = useState(false);
+  const [speaker, setSpeaker] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+
+  const roomRef = useRef<Room | null>(null);
+  const statusRef = useRef<CallStatus>('ringing');
+  const roleRef = useRef<'caller' | 'callee'>('caller');
+  const finishedRef = useRef(false);
+  const connectingRef = useRef(false);
+  const audioStartedRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Закрыть экран звонка: отключаем звук и возвращаемся назад
+  const finish = useCallback(
+    (text: string) => {
+      if (finishedRef.current) return;
+      finishedRef.current = true;
+      setNote(text);
+      setPhase('ended');
+      if (timerRef.current) clearInterval(timerRef.current);
+      roomRef.current?.disconnect();
+      roomRef.current = null;
+      if (audioStartedRef.current) {
+        AudioSession.stopAudioSession();
+        audioStartedRef.current = false;
+      }
+      setTimeout(() => {
+        if (router.canGoBack()) router.back();
+        else router.replace('/chats');
+      }, 1200);
+    },
+    [router]
+  );
+
+  // Подключиться к комнате LiveKit
+  const connect = useCallback(async () => {
+    if (connectingRef.current || finishedRef.current) return;
+    connectingRef.current = true;
+    setPhase('connecting');
+    try {
+      const perm = await AudioModule.requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert('Нет доступа', 'Разрешите микрофон в настройках телефона, чтобы звонить');
+        try {
+          await setCallStatus(callId, 'ended');
+        } catch {}
+        finish('Нет доступа к микрофону');
+        return;
+      }
+
+      await AudioSession.startAudioSession();
+      audioStartedRef.current = true;
+
+      const { token, url } = await fetchCallToken(callId);
+      const room = new Room();
+      roomRef.current = room;
+
+      room.on(RoomEvent.Disconnected, () => {
+        if (!finishedRef.current) finish('Звонок завершён');
+      });
+      // Собеседник вышел из комнаты — завершаем и у нас
+      room.on(RoomEvent.ParticipantDisconnected, () => {
+        setCallStatus(callId, 'ended').catch(() => {});
+        finish('Звонок завершён');
+      });
+
+      await room.connect(url, token);
+      await room.localParticipant.setMicrophoneEnabled(true);
+
+      if (finishedRef.current) {
+        room.disconnect();
+        return;
+      }
+      setPhase('live');
+      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+    } catch (e: any) {
+      Alert.alert('Не удалось подключиться', friendlyCallError(String(e?.message ?? e)));
+      try {
+        await setCallStatus(callId, 'ended');
+      } catch {}
+      finish('Не удалось подключиться');
+    }
+  }, [callId, finish]);
+
+  // Реакция на смену статуса звонка (из realtime или из проверки раз в 3 секунды)
+  const onStatus = useCallback(
+    (status: CallStatus) => {
+      if (finishedRef.current || status === statusRef.current) return;
+      statusRef.current = status;
+      if (status === 'accepted') connect();
+      else if (status === 'declined') finish('Звонок отклонён');
+      else if (status === 'missed') finish(roleRef.current === 'caller' ? 'Нет ответа' : 'Пропущенный звонок');
+      else if (status === 'ended') finish('Звонок завершён');
+    },
+    [connect, finish]
+  );
+
+  // Загрузка звонка и подписка на изменения
+  useEffect(() => {
+    let active = true;
+    let channel: ReturnType<typeof supabase.channel> | null = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
+
+    (async () => {
+      const { data: u } = await supabase.auth.getUser();
+      const me = u.user?.id;
+      const { data: call } = await supabase.from('calls').select('*').eq('id', callId).single();
+      if (!active) return;
+      if (!me || !call) {
+        finish('Звонок не найден');
+        return;
+      }
+      const c = call as CallRow;
+      const r = c.caller === me ? 'caller' : 'callee';
+      setRole(r);
+      roleRef.current = r;
+
+      const peer = r === 'caller' ? c.callee : c.caller;
+      const { data: p } = await supabase.from('profiles').select('username, avatar_path').eq('id', peer).single();
+      if (active && p) {
+        setPeerName(p.username || 'Без имени');
+        setPeerAvatar(p.avatar_path ?? null);
+      }
+
+      if (c.status === 'ringing') {
+        statusRef.current = 'ringing';
+        setPhase('ringing');
+      } else if (c.status === 'accepted') {
+        statusRef.current = 'ringing'; // чтобы onStatus сработал
+        onStatus('accepted');
+      } else {
+        finish('Звонок уже завершён');
+        return;
+      }
+
+      channel = supabase
+        .channel('call-' + callId)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'calls', filter: `id=eq.${callId}` },
+          (payload) => onStatus((payload.new as CallRow).status)
+        )
+        .subscribe();
+
+      // Подстраховка: если realtime пропустил событие, проверяем статус сами
+      poll = setInterval(async () => {
+        const { data: row } = await supabase.from('calls').select('status').eq('id', callId).single();
+        if (row) onStatus(row.status as CallStatus);
+      }, 3000);
+    })();
+
+    return () => {
+      active = false;
+      if (channel) supabase.removeChannel(channel);
+      if (poll) clearInterval(poll);
+    };
+  }, [callId, onStatus, finish]);
+
+  // Звонящий ждёт ответа не дольше 45 секунд
+  useEffect(() => {
+    if (phase !== 'ringing' || role !== 'caller') return;
+    const t = setTimeout(() => {
+      setCallStatus(callId, 'missed').catch(() => {});
+    }, 45000);
+    return () => clearTimeout(t);
+  }, [phase, role, callId]);
+
+  // Уход с экрана: отключаемся
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      roomRef.current?.disconnect();
+      if (audioStartedRef.current) AudioSession.stopAudioSession();
+    };
+  }, []);
+
+  // Положить трубку / отклонить / отменить
+  const hangup = useCallback(async () => {
+    if (finishedRef.current) return;
+    const st = statusRef.current;
+    try {
+      if (st === 'ringing') await setCallStatus(callId, roleRef.current === 'caller' ? 'missed' : 'declined');
+      else if (st === 'accepted') await setCallStatus(callId, 'ended');
+    } catch {}
+    finish(st === 'ringing' && roleRef.current === 'callee' ? 'Звонок отклонён' : 'Звонок завершён');
+  }, [callId, finish]);
+
+  // Кнопка «назад» на Android = положить трубку
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      hangup();
+      return true;
+    });
+    return () => sub.remove();
+  }, [hangup]);
+
+  const accept = async () => {
+    try {
+      await setCallStatus(callId, 'accepted');
+      statusRef.current = 'accepted';
+      connect();
+    } catch (e: any) {
+      Alert.alert('Не удалось ответить', friendlyCallError(String(e?.message ?? e)));
+      finish('Звонок завершён');
+    }
+  };
+
+  const toggleMute = async () => {
+    const next = !muted;
+    setMuted(next);
+    try {
+      await roomRef.current?.localParticipant.setMicrophoneEnabled(!next);
+    } catch {}
+  };
+
+  // Динамик / разговорный динамик (зависит от телефона, поэтому в try)
+  const toggleSpeaker = async () => {
+    const next = !speaker;
+    setSpeaker(next);
+    try {
+      await (AudioSession as any).selectAudioOutput?.(next ? 'speaker' : 'earpiece');
+    } catch {}
+  };
+
+  let statusText = '';
+  if (phase === 'loading') statusText = '';
+  else if (phase === 'ringing') statusText = role === 'caller' ? 'Вызов…' : 'Входящий звонок';
+  else if (phase === 'connecting') statusText = 'Соединение…';
+  else if (phase === 'live') statusText = fmt(seconds);
+  else statusText = note;
+
+  const showIncomingButtons = phase === 'ringing' && role === 'callee';
+  const showCallButtons = phase === 'connecting' || phase === 'live' || (phase === 'ringing' && role === 'caller');
+
+  return (
+    <View style={[styles.container, { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 40 }]}>
+      <Stack.Screen options={{ headerShown: false, gestureEnabled: false }} />
+
+      <View style={styles.center}>
+        {phase === 'loading' ? (
+          <ActivityIndicator color="#2563eb" size="large" />
+        ) : (
+          <>
+            <Avatar name={peerName || '?'} path={peerAvatar} size={140} />
+            <Text style={styles.name} numberOfLines={1}>
+              {peerName}
+            </Text>
+            <Text style={[styles.status, phase === 'live' && styles.statusLive]}>{statusText}</Text>
+          </>
+        )}
+      </View>
+
+      {showIncomingButtons && (
+        <View style={styles.buttonsRow}>
+          <View style={styles.btnBox}>
+            <Pressable style={[styles.circle, styles.red]} onPress={hangup}>
+              <Image source={require('../../../assets/icons/phon.png')} style={[styles.icon, styles.iconEnd]} />
+            </Pressable>
+            <Text style={styles.btnLabel}>Отклонить</Text>
+          </View>
+          <View style={styles.btnBox}>
+            <Pressable style={[styles.circle, styles.green]} onPress={accept}>
+              <Image source={require('../../../assets/icons/phon.png')} style={styles.icon} />
+            </Pressable>
+            <Text style={styles.btnLabel}>Ответить</Text>
+          </View>
+        </View>
+      )}
+
+      {showCallButtons && (
+        <View style={styles.buttonsRow}>
+          <View style={styles.btnBox}>
+            <Pressable style={[styles.circle, muted ? styles.dark : styles.gray]} onPress={toggleMute}>
+              <Text style={[styles.emoji, muted && { opacity: 0.9 }]}>{muted ? '🔇' : '🎙'}</Text>
+            </Pressable>
+            <Text style={styles.btnLabel}>{muted ? 'Включить' : 'Микрофон'}</Text>
+          </View>
+          <View style={styles.btnBox}>
+            <Pressable style={[styles.circle, styles.red]} onPress={hangup}>
+              <Image source={require('../../../assets/icons/phon.png')} style={[styles.icon, styles.iconEnd]} />
+            </Pressable>
+            <Text style={styles.btnLabel}>{phase === 'ringing' ? 'Отмена' : 'Завершить'}</Text>
+          </View>
+          <View style={styles.btnBox}>
+            <Pressable style={[styles.circle, speaker ? styles.dark : styles.gray]} onPress={toggleSpeaker}>
+              <Text style={styles.emoji}>🔊</Text>
+            </Pressable>
+            <Text style={styles.btnLabel}>Динамик</Text>
+          </View>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#fff', justifyContent: 'space-between' },
+  center: { alignItems: 'center', paddingHorizontal: 24 },
+  name: { fontSize: 28, fontWeight: '800', color: '#111', marginTop: 24, textAlign: 'center' },
+  status: { fontSize: 17, color: '#8a8f98', marginTop: 8 },
+  statusLive: { color: '#2563eb', fontWeight: '600' },
+  buttonsRow: { flexDirection: 'row', justifyContent: 'space-evenly', alignItems: 'flex-start' },
+  btnBox: { alignItems: 'center', width: 96 },
+  circle: { width: 68, height: 68, borderRadius: 34, alignItems: 'center', justifyContent: 'center' },
+  gray: { backgroundColor: '#f2f4f7' },
+  dark: { backgroundColor: '#d5d9df' },
+  red: { backgroundColor: '#ef4444' },
+  green: { backgroundColor: '#22c55e' },
+  icon: { width: 30, height: 30, tintColor: '#fff' },
+  iconEnd: { transform: [{ rotate: '135deg' }] },
+  emoji: { fontSize: 28 },
+  btnLabel: { fontSize: 13, color: '#8a8f98', marginTop: 8 },
+});

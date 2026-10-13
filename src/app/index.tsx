@@ -1,5 +1,8 @@
 // src/app/index.tsx — вход и регистрация
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -13,6 +16,21 @@ import {
   View,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
+const SOCIAL_LOGIN = false; // включим, когда настроим Google и Apple
+
+
+WebBrowser.maybeCompleteAuthSession();
+
+// Разбираем параметры из ссылки, на которую Google возвращает в приложение
+function parseParams(s: string) {
+  const out: Record<string, string> = {};
+  s.split('&').forEach((p) => {
+    if (!p) return;
+    const [k, v = ''] = p.split('=');
+    out[decodeURIComponent(k)] = decodeURIComponent(v);
+  });
+  return out;
+}
 
 type Mode = 'login' | 'signup';
 
@@ -73,6 +91,11 @@ export default function Index() {
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [appleAvailable, setAppleAvailable] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'ios') AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
+  }, []);
 
   const lastNameRef = useRef<TextInput>(null);
   const nicknameRef = useRef<TextInput>(null);
@@ -126,19 +149,20 @@ export default function Index() {
         mode === 'login'
           ? await supabase.auth.signInWithPassword({ email: cleanEmail, password })
           : await supabase.auth.signUp({
-              email: cleanEmail,
-              password,
-              // Имя и ник сохраняем вместе с аккаунтом, чтобы они не потерялись,
-              // даже если сначала нужно подтвердить почту
-              options: {
-                data: {
-                  first_name: cleanFirst,
-                  last_name: cleanLast,
-                  username: fullName,
-                  nickname: cleanNick,
-                },
+            email: cleanEmail,
+            password,
+            // Имя и ник сохраняем вместе с аккаунтом, чтобы они не потерялись,
+            // даже если сначала нужно подтвердить почту
+            options: {
+              data: {
+                first_name: cleanFirst,
+                last_name: cleanLast,
+                username: fullName,
+                nickname: cleanNick,
               },
-            });
+              emailRedirectTo: Linking.createURL('auth-callback'),
+            },
+          });
 
       if (err) {
         setError(friendlyError(err.message));
@@ -169,6 +193,81 @@ export default function Index() {
         setInfo(`Мы отправили письмо на ${cleanEmail}. Подтвердите почту по ссылке и войдите.`);
       }
     } catch (e: any) {
+      setError(friendlyError(String(e?.message ?? e)));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithGoogle = async () => {
+    if (loading) return;
+    setError(null);
+    setInfo(null);
+    setLoading(true);
+    try {
+      const redirectTo = Linking.createURL('auth-callback');
+      const { data, error: err } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo, skipBrowserRedirect: true },
+      });
+      if (err || !data?.url) throw err ?? new Error('Не удалось открыть Google');
+
+      const res = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+      if (res.type !== 'success') return; // человек закрыл окно
+
+      const query = res.url.includes('?') ? res.url.split('?')[1].split('#')[0] : '';
+      const hash = res.url.includes('#') ? res.url.split('#')[1] : '';
+      const q = parseParams(query);
+      const h = parseParams(hash);
+
+      if (q.code) {
+        const { error: e1 } = await supabase.auth.exchangeCodeForSession(q.code);
+        if (e1) throw e1;
+      } else if (h.access_token && h.refresh_token) {
+        const { error: e2 } = await supabase.auth.setSession({
+          access_token: h.access_token,
+          refresh_token: h.refresh_token,
+        });
+        if (e2) throw e2;
+      } else {
+        throw new Error('Google не вернул данные для входа');
+      }
+      router.replace('/chats');
+    } catch (e: any) {
+      setError(friendlyError(String(e?.message ?? e)));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const signInWithApple = async () => {
+    if (loading) return;
+    setError(null);
+    setInfo(null);
+    try {
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+      });
+      if (!credential.identityToken) throw new Error('Apple не вернул данные для входа');
+      setLoading(true);
+      const { error: err } = await supabase.auth.signInWithIdToken({
+        provider: 'apple',
+        token: credential.identityToken,
+      });
+      if (err) throw err;
+
+      // Apple отдаёт имя только при первом входе, сохраняем его сразу
+      const fullName = [credential.fullName?.givenName, credential.fullName?.familyName]
+        .filter(Boolean)
+        .join(' ');
+      if (fullName) await supabase.auth.updateUser({ data: { full_name: fullName } });
+
+      router.replace('/chats');
+    } catch (e: any) {
+      if (e?.code === 'ERR_REQUEST_CANCELED') return; // человек нажал «Отмена»
       setError(friendlyError(String(e?.message ?? e)));
     } finally {
       setLoading(false);
@@ -217,7 +316,7 @@ export default function Index() {
               <Row label="Имя">
                 <TextInput
                   style={styles.input}
-                  
+
                   placeholderTextColor="#9aa0a6"
                   value={firstName}
                   onChangeText={(t) => setFirstName(t.replace(NAME_CHARS, ''))}
@@ -233,7 +332,7 @@ export default function Index() {
                 <TextInput
                   ref={lastNameRef}
                   style={styles.input}
-                 
+
                   placeholderTextColor="#9aa0a6"
                   value={lastName}
                   onChangeText={(t) => setLastName(t.replace(NAME_CHARS, ''))}
@@ -347,6 +446,36 @@ export default function Index() {
           )}
         </Pressable>
 
+        {SOCIAL_LOGIN && (
+          <>
+            <View style={styles.dividerRow}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>или</Text>
+              <View style={styles.dividerLine} />
+            </View>
+
+            <Pressable
+              style={({ pressed }) => [styles.googleButton, (pressed || loading) && styles.buttonPressed]}
+              onPress={signInWithGoogle}
+              disabled={loading}
+            >
+              <Text style={styles.googleG}>G</Text>
+              <Text style={styles.googleText}>Продолжить через Google</Text>
+            </Pressable>
+
+            {appleAvailable && (
+              <AppleAuthentication.AppleAuthenticationButton
+                buttonType={AppleAuthentication.AppleAuthenticationButtonType.CONTINUE}
+                buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.BLACK}
+                cornerRadius={12}
+                style={styles.appleButton}
+                onPress={signInWithApple}
+              />
+            )}
+
+          </>
+        )}
+
         <Pressable onPress={() => switchMode(isSignup ? 'login' : 'signup')} hitSlop={8}>
           <Text style={styles.link}>
             {isSignup ? 'Уже есть аккаунт? Войти' : 'Нет аккаунта? Зарегистрироваться'}
@@ -418,5 +547,23 @@ const styles = StyleSheet.create({
   },
   buttonPressed: { opacity: 0.75 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 18 },
+  dividerLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: '#d9dde3' },
+  dividerText: { marginHorizontal: 12, color: '#9aa0a6', fontSize: 14 },
+  googleButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#d9dde3',
+    backgroundColor: '#fff',
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  googleG: { fontSize: 18, fontWeight: '700', color: '#4285F4', marginRight: 10 },
+  googleText: { fontSize: 16, fontWeight: '600', color: '#111' },
+  appleButton: { height: 50, marginTop: 10 },
   link: { color: '#2563eb', textAlign: 'center', marginTop: 18, fontSize: 15, fontWeight: '500' },
 });
+
+
