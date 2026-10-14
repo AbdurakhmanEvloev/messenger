@@ -1,8 +1,19 @@
 // src/app/call/[id].tsx — экран голосового звонка (исходящий, входящий и разговор)
-import { AudioSession, registerGlobals } from '@livekit/react-native';
+let AudioSession: any = null;
+let registerGlobals: any = null;
+let Room: any = null;
+let RoomEvent: any = null;
+let livekitReady = false;
+try {
+  ({ AudioSession, registerGlobals } = require('@livekit/react-native'));
+  ({ Room, RoomEvent } = require('livekit-client'));
+  livekitReady = true;
+} catch (e) {
+  livekitReady = false; // Expo Go: нативного WebRTC нет
+}
 import { AudioModule } from 'expo-audio';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Room, RoomEvent } from 'livekit-client';
+import type { Room as LKRoom } from 'livekit-client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, BackHandler, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,7 +21,7 @@ import Avatar from '../../components/Avatar';
 import { CallRow, CallStatus, fetchCallToken, friendlyCallError, setCallStatus } from '../../lib/calls';
 import { supabase } from '../../lib/supabase';
 
-registerGlobals();
+if (livekitReady) registerGlobals();
 
 type Phase = 'loading' | 'ringing' | 'connecting' | 'live' | 'ended';
 
@@ -35,7 +46,7 @@ export default function CallScreen() {
   const [speaker, setSpeaker] = useState(false);
   const [seconds, setSeconds] = useState(0);
 
-  const roomRef = useRef<Room | null>(null);
+  const roomRef = useRef<LKRoom | null>(null);
   const statusRef = useRef<CallStatus>('ringing');
   const roleRef = useRef<'caller' | 'callee'>('caller');
   const finishedRef = useRef(false);
@@ -76,7 +87,7 @@ export default function CallScreen() {
         Alert.alert('Нет доступа', 'Разрешите микрофон в настройках телефона, чтобы звонить');
         try {
           await setCallStatus(callId, 'ended');
-        } catch {}
+        } catch { }
         finish('Нет доступа к микрофону');
         return;
       }
@@ -93,7 +104,7 @@ export default function CallScreen() {
       });
       // Собеседник вышел из комнаты — завершаем и у нас
       room.on(RoomEvent.ParticipantDisconnected, () => {
-        setCallStatus(callId, 'ended').catch(() => {});
+        setCallStatus(callId, 'ended').catch(() => { });
         finish('Звонок завершён');
       });
 
@@ -110,7 +121,7 @@ export default function CallScreen() {
       Alert.alert('Не удалось подключиться', friendlyCallError(String(e?.message ?? e)));
       try {
         await setCallStatus(callId, 'ended');
-      } catch {}
+      } catch { }
       finish('Не удалось подключиться');
     }
   }, [callId, finish]);
@@ -193,7 +204,7 @@ export default function CallScreen() {
   useEffect(() => {
     if (phase !== 'ringing' || role !== 'caller') return;
     const t = setTimeout(() => {
-      setCallStatus(callId, 'missed').catch(() => {});
+      setCallStatus(callId, 'missed').catch(() => { });
     }, 45000);
     return () => clearTimeout(t);
   }, [phase, role, callId]);
@@ -214,7 +225,7 @@ export default function CallScreen() {
     try {
       if (st === 'ringing') await setCallStatus(callId, roleRef.current === 'caller' ? 'missed' : 'declined');
       else if (st === 'accepted') await setCallStatus(callId, 'ended');
-    } catch {}
+    } catch { }
     finish(st === 'ringing' && roleRef.current === 'callee' ? 'Звонок отклонён' : 'Звонок завершён');
   }, [callId, finish]);
 
@@ -243,7 +254,7 @@ export default function CallScreen() {
     setMuted(next);
     try {
       await roomRef.current?.localParticipant.setMicrophoneEnabled(!next);
-    } catch {}
+    } catch { }
   };
 
   // Динамик / разговорный динамик (зависит от телефона, поэтому в try)
@@ -252,7 +263,7 @@ export default function CallScreen() {
     setSpeaker(next);
     try {
       await (AudioSession as any).selectAudioOutput?.(next ? 'speaker' : 'earpiece');
-    } catch {}
+    } catch { }
   };
 
   let statusText = '';
