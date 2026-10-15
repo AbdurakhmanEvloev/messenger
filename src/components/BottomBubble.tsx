@@ -27,15 +27,24 @@ export default function BottomBubble({ active }: { active: Tab }) {
           return (
             <Pressable
               key={t.key}
-              onPress={() => !on && router.push(t.href)}
-              style={[styles.item, on && styles.itemOn]}
+              onPress={() => !on && router.replace(t.href as any)}
+              hitSlop={4}
+              style={({ pressed }) => [styles.item, on && styles.itemOn, pressed && !on && styles.itemPressed]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: on }}
+              accessibilityLabel={t.label}
             >
               <Ionicons
                 name={on ? t.iconOn : t.icon}
-                size={24}
-                color={on ? '#2a8bf2' : '#8a8f98'}
+                size={22}
+                color={on ? '#2a8bf2' : '#111'}
               />
-              <Text style={[styles.label, on && styles.labelOn]} numberOfLines={1}>
+              <Text
+                style={[styles.label, on && styles.labelOn]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
+              >
                 {t.label}
               </Text>
             </Pressable>
@@ -47,26 +56,29 @@ export default function BottomBubble({ active }: { active: Tab }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { position: 'absolute', left: 16, right: 16 },
+  wrap: { position: 'absolute', left: 28, right: 28 },
   bubble: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.97)',
-    borderRadius: 30,
+    backgroundColor: '#fff',
+    borderRadius: 28,
     padding: 4,
+    borderWidth: 1,
+    borderColor: '#d5d9de',
     elevation: 3,
     shadowColor: '#000',
-    shadowOpacity: 0.06,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
   },
   item: {
     flex: 1,
+    height: 46,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 5,
-    borderRadius: 26,
+    borderRadius: 24,
   },
-  itemOn: { backgroundColor: '#eef1f5' },
-  label: { fontSize: 10, color: '#8a8f98', marginTop: 2, fontWeight: '500' },
+  itemOn: { backgroundColor: '#e8f1fe' },
+  itemPressed: { backgroundColor: '#f2f4f7' },
+  label: { fontSize: 10, color: '#111', marginTop: 1, fontWeight: '500' },
   labelOn: { color: '#2a8bf2', fontWeight: '600' },
 });

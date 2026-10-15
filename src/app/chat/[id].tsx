@@ -1,4 +1,5 @@
 // src/app/chat/[id].tsx — экран чата с текстом, голосовыми, фото и профилем собеседника (полный файл)
+import { Ionicons } from '@expo/vector-icons';
 import {
   AudioModule,
   createAudioPlayer,
@@ -270,17 +271,7 @@ function VoiceBubble({ path, mine, onLongPress }: { path: string; mine: boolean;
 
 // ---------- Галочки и время под сообщением ----------
 function Ticks({ read, color }: { read: boolean; color: string }) {
-  return (
-    <Image
-      source={
-        read
-          ? require('../../../assets/icons/tick_all.png')
-          : require('../../../assets/icons/tick.png')
-      }
-      style={{ width: read ? 18 : 14, height: 14, tintColor: color }}
-      resizeMode="contain"
-    />
-  );
+  return <Ionicons name={read ? 'checkmark-done' : 'checkmark'} size={read ? 17 : 15} color={color} />;
 }
 
 function MessageMeta({
@@ -296,28 +287,28 @@ function MessageMeta({
   onPhoto?: boolean;
   inline?: boolean;
 }) {
-  const timeColor = onPhoto ? '#fff' : mine ? 'rgba(255,255,255,0.75)' : '#8a8f98';
-  const tickColor = onPhoto ? (read ? '#6cb2ff' : '#fff') : mine ? (read ? '#fff' : 'rgba(255,255,255,0.65)') : '#9a94a8';
+  const timeColor = onPhoto ? '#fff' : '#6b7280';
+  const tickColor = read ? (onPhoto ? '#7cc0ff' : '#2a8bf2') : onPhoto ? '#fff' : '#8a8f98';
   return (
     <View
       style={[
-        { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 2 },
+        { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', marginTop: 3 },
         inline && { marginLeft: 10, marginTop: 0, marginBottom: 1 },
         onPhoto && {
           position: 'absolute',
           right: 8,
-          bottom: 6,
+          bottom: 8,
           marginTop: 0,
-          paddingHorizontal: 6,
-          paddingVertical: 2,
-          borderRadius: 10,
-          backgroundColor: 'rgba(0,0,0,0.45)',
+          paddingHorizontal: 7,
+          paddingVertical: 3,
+          borderRadius: 12,
+          backgroundColor: 'rgba(0,0,0,0.5)',
         },
       ]}
     >
-      <Text style={{ fontSize: 11, color: timeColor }}>{time}</Text>
+      <Text style={{ fontSize: 11.5, color: timeColor, fontWeight: '500' }}>{time}</Text>
       {mine && (
-        <View style={{ marginLeft: 4 }}>
+        <View style={{ marginLeft: 3 }}>
           <Ticks read={read} color={tickColor} />
         </View>
       )}
@@ -872,6 +863,7 @@ export default function ChatScreen() {
                 mine ? styles.bubbleMine : styles.bubbleTheirs,
                 isImage && styles.bubbleImage,
                 !mine && firstInGroup && styles.tailFirst,
+                mine && firstInGroup && styles.tailFirstMine,
               ]}
             >
               {item.reply_to && (
@@ -937,11 +929,8 @@ export default function ChatScreen() {
       />
 
       <View style={[styles.header, { paddingTop: insets.top + 6 }]} pointerEvents="box-none">
-        <Pressable style={styles.circleBtn} onPress={() => router.back()}>
-          <Image
-            source={require('../../../assets/icons/back.png')}
-            style={{ width: 22, height: 22, tintColor: '#111' }}
-          />
+        <Pressable style={styles.backBtn} onPress={() => router.back()}>
+          <Ionicons name="chevron-back" size={28} color="#111" />
         </Pressable>
 
         <Pressable
@@ -967,175 +956,208 @@ export default function ChatScreen() {
           </View>
         </Pressable>
 
-        <Pressable style={styles.circleBtn} onPress={() => startVoiceCall(false)} disabled={calling}>
-          <Image
-            source={require('../../../assets/icons/phon.png')}
-            style={{ width: 22, height: 22, tintColor: '#111' }}
-          />
-        </Pressable>
-        <Pressable style={styles.circleBtn} onPress={() => startVoiceCall(true)} disabled={calling}>
-          <Text style={{ fontSize: 20 }}>🎥</Text>
-        </Pressable>
-        <Pressable style={styles.circleBtn} onPress={() => Alert.alert('Меню', 'Здесь скоро будут функции')}>
-          <Image
-            source={require('../../../assets/icons/menu.png')}
-            style={{ width: 22, height: 22, tintColor: '#111' }}
-          />
-        </Pressable>
+        <View style={styles.callBubble}>
+          <Pressable
+            style={styles.callBtn}
+            onPress={() => startVoiceCall(false)}
+            disabled={calling}
+          >
+            <Ionicons name="call-outline" size={24} color="#111" />
+          </Pressable>
+          <View style={styles.callDivider} />
+          <Pressable
+            style={styles.callBtn}
+            onPress={() => startVoiceCall(true)}
+            disabled={calling}
+          >
+            <Ionicons name="videocam-outline" size={26} color="#111" />
+          </Pressable>
+          <View style={styles.callDivider} />
+          <Pressable
+            style={styles.callBtn}
+            onPress={() => Alert.alert('Меню', 'Здесь скоро будут функции')}
+          >
+            <Ionicons name="ellipsis-horizontal" size={24} color="#111" />
+          </Pressable>
+        </View>
       </View>
 
-      {blockState !== 'none' ? (
-        <View
-          style={{
-            backgroundColor: 'rgba(255,255,255,0.9)',
-            paddingTop: 14,
-            paddingHorizontal: 20,
-            paddingBottom: 14 + insets.bottom,
-            alignItems: 'center',
-          }}
-        >
-          <Text style={{ fontSize: 15, color: '#6b7280', textAlign: 'center' }}>
-            {blockState === 'i_blocked'
-              ? 'Вы заблокировали этого пользователя. Разблокируйте его в профиле, чтобы писать.'
-              : 'Вы не можете писать этому пользователю.'}
-          </Text>
-          {blockState === 'i_blocked' && peerId && (
-            <Pressable onPress={() => router.push(`/user/${peerId}`)} style={{ marginTop: 8 }}>
-              <Text style={{ fontSize: 15, color: '#2563eb', fontWeight: '600' }}>Открыть профиль</Text>
-            </Pressable>
-          )}
-        </View>
-      ) : (
-        <View
-          onLayout={(e) => setInputH(e.nativeEvent.layout.height)}
-          style={[
-            styles.inputBar,
-            {
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: kbHeight,
-              backgroundColor: 'transparent',
-              borderTopWidth: 0,
-              paddingBottom: 8 + (Platform.OS === 'ios' && kbVisible ? 0 : insets.bottom),
-            },
-          ]}
-        >
-          {replyTo && (
-            <View style={[styles.replyBar, { bottom: inputH + 4, marginBottom: 0, zIndex: 10, elevation: 10 }]}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.replyTitle}>Ответ</Text>
-                <Text style={styles.replyText} numberOfLines={1}>{previewOf(replyTo)}</Text>
-              </View>
-              <Pressable onPress={() => setReplyTo(null)} hitSlop={10}>
-                <Text style={{ fontSize: 20, color: '#8a8f98' }}>✕</Text>
-              </Pressable>
-            </View>
-          )}
-
+      {
+        blockState !== 'none' ? (
           <View
             style={{
-              flex: 1,
-              flexDirection: 'row',
-              alignItems: 'flex-end',
               backgroundColor: 'rgba(255,255,255,0.9)',
-              borderRadius: 22,
-
-              minHeight: 44,
-              paddingLeft: 16,
-              paddingRight: 4,
-              shadowColor: '#000',
-              shadowOpacity: 0.08,
-              shadowRadius: 3,
-              shadowOffset: { width: 0, height: 1 },
-              elevation: 2,
+              paddingTop: 14,
+              paddingHorizontal: 20,
+              paddingBottom: 14 + insets.bottom,
+              alignItems: 'center',
             }}
           >
-            <TextInput
-              style={{
-                flex: 1,
-                minHeight: 44,
-                maxHeight: 100,
-                paddingVertical: 8,
-                fontSize: 16,
-                color: '#000',
-                textAlignVertical: 'center',
-              }}
-              value={text}
-              onChangeText={onChangeText}
-              placeholder="Сообщение"
-              placeholderTextColor="#000"
-              multiline
-            />
-            <Pressable
-              style={{ width: 38, height: 40, alignItems: 'center', justifyContent: 'center' }}
-              onPress={() => pickAndSendPhoto('library')}
-              disabled={sending}
-            >
-              <Image source={require('../../../assets/icons/clip.png')} style={{ width: 24, height: 24, tintColor: '#000' }} />
-            </Pressable>
-            {text.trim().length === 0 && (
-              <Pressable
-                style={{ width: 38, height: 40, alignItems: 'center', justifyContent: 'center' }}
-                onPress={() => pickAndSendPhoto('camera')}
-                disabled={sending || recording}
-              >
-                <Image source={require('../../../assets/icons/camera.png')} style={{ width: 24, height: 24, tintColor: '#000' }} />
+            <Text style={{ fontSize: 15, color: '#6b7280', textAlign: 'center' }}>
+              {blockState === 'i_blocked'
+                ? 'Вы заблокировали этого пользователя. Разблокируйте его в профиле, чтобы писать.'
+                : 'Вы не можете писать этому пользователю.'}
+            </Text>
+            {blockState === 'i_blocked' && peerId && (
+              <Pressable onPress={() => router.push(`/user/${peerId}`)} style={{ marginTop: 8 }}>
+                <Text style={{ fontSize: 15, color: '#2563eb', fontWeight: '600' }}>Открыть профиль</Text>
               </Pressable>
             )}
           </View>
+        ) : (
+          <View
+            onLayout={(e) => setInputH(e.nativeEvent.layout.height)}
+            style={[
+              styles.inputBar,
+              {
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                bottom: kbHeight,
+                backgroundColor: 'transparent',
+                borderTopWidth: 0,
+                paddingBottom: 8 + (Platform.OS === 'ios' && kbVisible ? 0 : insets.bottom),
+              },
+            ]}
+          >
+            {replyTo && (
+              <View style={[styles.replyBar, { bottom: inputH + 4, marginBottom: 0, zIndex: 10, elevation: 10 }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.replyTitle}>Ответ</Text>
+                  <Text style={styles.replyText} numberOfLines={1}>{previewOf(replyTo)}</Text>
+                </View>
+                <Pressable onPress={() => setReplyTo(null)} hitSlop={10}>
+                  <Text style={{ fontSize: 20, color: '#8a8f98' }}>✕</Text>
+                </Pressable>
+              </View>
+            )}
 
-          {text.trim().length > 0 ? (
-            <Pressable style={styles.button} onPress={sendText}>
-              <Image source={require('../../../assets/icons/send.png')} style={{ width: 22, height: 22, tintColor: '#fff' }} />
-            </Pressable>
-          ) : (
-            <Pressable
-              style={[styles.button, recording && styles.buttonRecording]}
-              onPress={recording ? stopAndSend : startRecording}
-              disabled={sending}
-            >
-              {recording ? (
-                <Text style={styles.buttonText}>■</Text>
-              ) : (
-                <Image
-                  source={require('../../../assets/icons/mic.png')}
-                  style={{ width: 22, height: 22, tintColor: '#fff' }}
-                />
+            <View style={styles.inputPill}>
+              <TextInput
+                style={styles.inputText}
+                value={text}
+                onChangeText={onChangeText}
+                placeholder="Сообщение"
+                placeholderTextColor="#8a8f98"
+                multiline
+              />
+              <Pressable style={styles.inputIconBtn} onPress={() => pickAndSendPhoto('library')} disabled={sending}>
+                <Ionicons name="attach-outline" size={26} color="#111" />
+              </Pressable>
+              {text.trim().length === 0 && (
+                <Pressable style={styles.inputIconBtn} onPress={() => pickAndSendPhoto('camera')} disabled={sending || recording}>
+                  <Ionicons name="camera-outline" size={26} color="#111" />
+                </Pressable>
               )}
-            </Pressable>
-          )}
-        </View>
-      )}
+            </View>
+
+            {text.trim().length > 0 ? (
+              <Pressable style={styles.roundBtn} onPress={sendText}>
+                <Ionicons name="send" size={22} color="#2a8bf2" />
+              </Pressable>
+            ) : (
+              <Pressable
+                style={[styles.roundBtn, recording && styles.roundBtnRec]}
+                onPress={recording ? stopAndSend : startRecording}
+                disabled={sending}
+              >
+                <Ionicons name={recording ? 'stop' : 'mic-outline'} size={26} color={recording ? '#fff' : '#111'} />
+              </Pressable>
+            )}
+
+          </View>
+        )
+      }
 
       {/* iOS: подпорка высотой с клавиатуру, она поднимает панель ввода */}
       <View style={{ height: kbHeight }} />
 
-    </KeyboardAvoidingView>
+    </KeyboardAvoidingView >
   );
 }
 
 const styles = StyleSheet.create({
+
+  inputPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: '#fff',
+    borderRadius: 23,
+    minHeight: 46,
+    paddingLeft: 16,
+    paddingRight: 4,
+    borderWidth: 1,
+    borderColor: '#d5d9de',
+  },
+  inputText: {
+    flex: 1,
+    minHeight: 46,
+    maxHeight: 110,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: '#111',
+  },
+  inputIconBtn: { width: 42, height: 46, alignItems: 'center', justifyContent: 'center' },
+  roundBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    marginLeft: 8,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#d5d9de',
+  },
+  roundBtnRec: { backgroundColor: '#e53935' },
+
+
+  callBtn: {
+    width: 34,
+    height: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  callDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 24,
+    backgroundColor: '#d5d9de',
+  },
   container: { flex: 1, backgroundColor: '#fff' },
   list: { padding: 12 },
-  row: { flexDirection: 'row', marginVertical: 1 },
-  rowGroupEnd: { marginBottom: 6 },
+  row: { flexDirection: 'row', marginVertical: 4 },
+  rowGroupEnd: { marginBottom: 12 },
   rowMine: { justifyContent: 'flex-end' },
   rowTheirs: { justifyContent: 'flex-start' },
-  bubble: { maxWidth: '80%', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18 },
-  bubbleMine: { backgroundColor: '#2f80ed' },
-  bubbleTheirs: { backgroundColor: '#f1f3f4' },
+  bubble: {
+    maxWidth: '80%',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  bubbleMine: { backgroundColor: '#e4edf8' },
+  bubbleTheirs: { backgroundColor: '#ffffff' },
+  msgText: { fontSize: 16, lineHeight: 22, color: '#111' },
+  msgTextMine: { color: '#111' },
 
 
   bubbleImage: { paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
-  msgText: { fontSize: 16, color: '#111' },
-  msgTextMine: { color: '#fff' },
+
 
 
   textRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end' },
 
   tailFirst: { borderTopLeftRadius: 3 },
+  tailFirstMine: { borderTopRightRadius: 3 },
   replyBar: {
+
+
     position: 'absolute',
     right: 8,
     bottom: 6,
@@ -1181,19 +1203,42 @@ const styles = StyleSheet.create({
   circleIcon: { fontSize: 30, color: '#4b5563', lineHeight: 34 },
   namePill: {
     flex: 1,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: 'rgba(255,255,255,0.9)',
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 5,
-    paddingRight: 14,
-    shadowColor: '#000',
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 3,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#fff',
+    paddingLeft: 4,
+    paddingRight: 12,
+    marginLeft: 4,
   },
+  callBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 23,
+    paddingHorizontal: 4,
+    height: 46,
+    marginLeft: 4,
+  },
+  menuBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 4,
+  },
+  backBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
   dateChip: {
     alignSelf: 'center',
     backgroundColor: 'rgba(0,0,0,0.28)',
