@@ -1,12 +1,14 @@
 // src/app/call/[id].tsx — экран голосового звонка (исходящий, входящий и разговор)
 let AudioSession: any = null;
 let registerGlobals: any = null;
+let VideoTrack: any = null;
 let Room: any = null;
 let RoomEvent: any = null;
+let Track: any = null;
 let livekitReady = false;
 try {
-  ({ AudioSession, registerGlobals } = require('@livekit/react-native'));
-  ({ Room, RoomEvent } = require('livekit-client'));
+  ({ AudioSession, registerGlobals, VideoTrack } = require('@livekit/react-native'));
+  ({ Room, RoomEvent, Track } = require('livekit-client'));
   livekitReady = true;
 } catch (e) {
   livekitReady = false; // Expo Go: нативного WebRTC нет
@@ -15,13 +17,18 @@ import { AudioModule } from 'expo-audio';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import type { Room as LKRoom } from 'livekit-client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, BackHandler, Image, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../../components/Avatar';
 import { CallRow, CallStatus, fetchCallToken, friendlyCallError, setCallStatus } from '../../lib/calls';
 import { supabase } from '../../lib/supabase';
 
 if (livekitReady) registerGlobals();
+async function ensureCameraPermission() {
+  if (Platform.OS !== 'android') return true;
+  const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+  return r === PermissionsAndroid.RESULTS.GRANTED;
+}
 
 type Phase = 'loading' | 'ringing' | 'connecting' | 'live' | 'ended';
 
@@ -32,7 +39,7 @@ function fmt(sec: number) {
 }
 
 export default function CallScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, video } = useLocalSearchParams<{ id: string; video?: string }>();
   const callId = String(id);
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -45,6 +52,10 @@ export default function CallScreen() {
   const [muted, setMuted] = useState(false);
   const [speaker, setSpeaker] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const [camOn, setCamOn] = useState(false);
+  const [facing, setFacing] = useState<'user' | 'environment'>('user');
+  const [remoteVideo, setRemoteVideo] = useState<any>(null);
+  const [localVideo, setLocalVideo] = useState<any>(null);
 
   const roomRef = useRef<LKRoom | null>(null);
   const statusRef = useRef<CallStatus>('ringing');
@@ -53,6 +64,22 @@ export default function CallScreen() {
   const connectingRef = useRef(false);
   const audioStartedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Обновить картинки: своё видео и видео собеседника
+  const refreshVideo = useCallback(() => {
+    const room = roomRef.current;
+    if (!room || !Track) return;
+    const lp = room.localParticipant;
+    const lpub = lp.getTrackPublication(Track.Source.Camera);
+    setLocalVideo(
+      lpub?.track && !lpub.isMuted ? { participant: lp, publication: lpub, source: Track.Source.Camera } : null
+    );
+    const peer: any = Array.from(room.remoteParticipants.values())[0];
+    const rpub = peer?.getTrackPublication(Track.Source.Camera);
+    setRemoteVideo(
+      rpub?.track && !rpub.isMuted ? { participant: peer, publication: rpub, source: Track.Source.Camera } : null
+    );
+  }, []);
 
   // Закрыть экран звонка: отключаем звук и возвращаемся назад
   const finish = useCallback(
@@ -108,8 +135,20 @@ export default function CallScreen() {
         finish('Звонок завершён');
       });
 
+      room.on(RoomEvent.TrackSubscribed, refreshVideo);
+      room.on(RoomEvent.TrackUnsubscribed, refreshVideo);
+      room.on(RoomEvent.TrackMuted, refreshVideo);
+      room.on(RoomEvent.TrackUnmuted, refreshVideo);
+      room.on(RoomEvent.LocalTrackPublished, refreshVideo);
+      room.on(RoomEvent.LocalTrackUnpublished, refreshVideo);
+
       await room.connect(url, token);
       await room.localParticipant.setMicrophoneEnabled(true);
+      if (video === '1' && (await ensureCameraPermission())) {
+        await room.localParticipant.setCameraEnabled(true);
+        setCamOn(true);
+        refreshVideo();
+      }
 
       if (finishedRef.current) {
         room.disconnect();
@@ -124,7 +163,7 @@ export default function CallScreen() {
       } catch { }
       finish('Не удалось подключиться');
     }
-  }, [callId, finish]);
+  }, [callId, finish, video, refreshVideo]);
 
   // Реакция на смену статуса звонка (из realtime или из проверки раз в 3 секунды)
   const onStatus = useCallback(
@@ -266,6 +305,31 @@ export default function CallScreen() {
     } catch { }
   };
 
+  const toggleCamera = async () => {
+    const room = roomRef.current;
+    if (!room) return;
+    try {
+      if (!camOn && !(await ensureCameraPermission())) {
+        Alert.alert('Нет доступа', 'Разрешите камеру в настройках телефона');
+        return;
+      }
+      await room.localParticipant.setCameraEnabled(!camOn);
+      setCamOn(!camOn);
+      refreshVideo();
+    } catch (e: any) {
+      Alert.alert('Камера', String(e?.message ?? e));
+    }
+  };
+
+  const flipCamera = async () => {
+    try {
+      const pub: any = roomRef.current?.localParticipant.getTrackPublication(Track.Source.Camera);
+      const next = facing === 'user' ? 'environment' : 'user';
+      await pub?.track?.restartTrack({ facingMode: next });
+      setFacing(next);
+    } catch { }
+  };
+
   let statusText = '';
   if (phase === 'loading') statusText = '';
   else if (phase === 'ringing') statusText = role === 'caller' ? 'Вызов…' : 'Входящий звонок';
@@ -280,8 +344,20 @@ export default function CallScreen() {
     <View style={[styles.container, { paddingTop: insets.top + 60, paddingBottom: insets.bottom + 40 }]}>
       <Stack.Screen options={{ headerShown: false, gestureEnabled: false }} />
 
+      {VideoTrack && remoteVideo && (
+        <VideoTrack trackRef={remoteVideo} style={StyleSheet.absoluteFill} objectFit="cover" />
+      )}
+      {VideoTrack && localVideo && (
+        <View style={[styles.selfView, { top: insets.top + 12 }]}>
+          <VideoTrack trackRef={localVideo} style={{ flex: 1 }} objectFit="cover" mirror={facing === 'user'} />
+          <Pressable style={styles.flipBtn} onPress={flipCamera}>
+            <Text style={{ fontSize: 16 }}>🔄</Text>
+          </Pressable>
+        </View>
+      )}
+
       <View style={styles.center}>
-        {phase === 'loading' ? (
+        {remoteVideo ? null : phase === 'loading' ? (
           <ActivityIndicator color="#2563eb" size="large" />
         ) : (
           <>
@@ -331,6 +407,14 @@ export default function CallScreen() {
             </Pressable>
             <Text style={styles.btnLabel}>Динамик</Text>
           </View>
+          {phase === 'live' && (
+            <View style={styles.btnBox}>
+              <Pressable style={[styles.circle, camOn ? styles.dark : styles.gray]} onPress={toggleCamera}>
+                <Text style={styles.emoji}>{camOn ? '📷' : '🎥'}</Text>
+              </Pressable>
+              <Text style={styles.btnLabel}>Камера</Text>
+            </View>
+          )}
         </View>
       )}
     </View>
@@ -344,7 +428,9 @@ const styles = StyleSheet.create({
   status: { fontSize: 17, color: '#8a8f98', marginTop: 8 },
   statusLive: { color: '#2563eb', fontWeight: '600' },
   buttonsRow: { flexDirection: 'row', justifyContent: 'space-evenly', alignItems: 'flex-start' },
-  btnBox: { alignItems: 'center', width: 96 },
+  btnBox: { alignItems: 'center', width: 80 },
+  selfView: { position: 'absolute', right: 16, width: 110, height: 160, borderRadius: 14, overflow: 'hidden', backgroundColor: '#000', zIndex: 5 },
+  flipBtn: { position: 'absolute', bottom: 6, right: 6, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
   circle: { width: 68, height: 68, borderRadius: 34, alignItems: 'center', justifyContent: 'center' },
   gray: { backgroundColor: '#f2f4f7' },
   dark: { backgroundColor: '#d5d9df' },

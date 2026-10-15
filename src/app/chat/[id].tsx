@@ -29,10 +29,9 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../../components/Avatar';
-import { getChatBg } from '../../lib/chat-bg';
-// Путь к клиенту Supabase: если у вас файл лежит в другом месте, поправьте эту строку
 import { friendlyCallError, startCall } from '../../lib/calls';
 import { supabase } from '../../lib/supabase';
+import { getWallpaper } from '../../lib/wallpaper'; // Путь к клиенту Supabase: если у вас файл лежит в другом месте, поправьте эту строку
 
 type Message = {
   id: string;
@@ -382,8 +381,8 @@ export default function ChatScreen() {
   const [bg, setBg] = useState<string | null>(null);
 
   useEffect(() => {
-    getChatBg().then(setBg);
-  }, []);
+  getWallpaper().then(setBg);
+}, []);
   // Блокировка: none — всё хорошо, i_blocked — я заблокировала, blocked_me — меня заблокировали
   const [blockState, setBlockState] = useState<'none' | 'i_blocked' | 'blocked_me'>('none');
 

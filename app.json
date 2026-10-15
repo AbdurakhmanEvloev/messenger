@@ -10,7 +10,11 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "com.abdurakhman.messenger",
-      "bitcode": false
+      "bitcode": false,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Камера нужна для видеозвонков и фото",
+        "NSMicrophoneUsageDescription": "Микрофон нужен для звонков и голосовых сообщений"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -31,7 +35,8 @@
         "android.permission.INTERNET",
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.WAKE_LOCK",
-        "android.permission.BLUETOOTH"
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_CONNECT"
       ]
     },
     "web": {
@@ -52,7 +57,16 @@
       "expo-dev-client",
       "@livekit/react-native-expo-plugin",
       "@config-plugins/react-native-webrtc",
-      "expo-build-properties"
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "buildArchs": [
+              "arm64-v8a"
+            ]
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
