@@ -1,6 +1,7 @@
 // src/app/chats.tsx — список чатов (поиск + три точки в шапке)
+import { Ionicons } from '@expo/vector-icons';
 import { Stack, useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
@@ -50,11 +51,15 @@ export default function Chats() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const reqId = useRef(0); // номер последнего запроса
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
-    setMyId(u.user.id);
+    const my = ++reqId.current;
+    const { data: s } = await supabase.auth.getSession();
+    const user = s.session?.user;
+    if (!user) return;
+    setMyId(user.id);
     const { data, error: err } = await supabase.rpc('get_chat_list');
     if (err) {
       console.log('[CHATS] ошибка:', err.message);
@@ -67,17 +72,38 @@ export default function Chats() {
   }, []);
 
   // Когда экран открыт: загружаем список и следим за новыми сообщениями
+
+  const scheduleLoad = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(load, 300);
+  }, [load]);
+
   useFocusEffect(
     useCallback(() => {
+      let active = true;
+      let channel: ReturnType<typeof supabase.channel> | null = null;
+
       load();
-      const channel = supabase
-        .channel('chat-list')
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => load())
-        .subscribe();
+
+      (async () => {
+        // старый канал мог ещё не закрыться: ждём
+        const old = supabase.getChannels().filter((c) => c.topic === 'realtime:chat-list');
+        await Promise.all(old.map((c) => supabase.removeChannel(c)));
+        if (!active) return;
+
+        channel = supabase
+          .channel('chat-list')
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, scheduleLoad)
+          .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'messages' }, scheduleLoad)
+          .subscribe();
+      })();
+
       return () => {
-        supabase.removeChannel(channel);
+        active = false;
+        if (timer.current) clearTimeout(timer.current);
+        if (channel) supabase.removeChannel(channel);
       };
-    }, [load])
+    }, [load, scheduleLoad])
   );
 
   // Удалить файлы (голосовые и фото) из хранилища
@@ -141,10 +167,10 @@ export default function Chats() {
   const q = query.trim().toLowerCase();
   const shown = q
     ? chats.filter(
-        (c) =>
-          (c.username ?? '').toLowerCase().includes(q) ||
-          (c.last_text ?? '').toLowerCase().includes(q)
-      )
+      (c) =>
+        (c.username ?? '').toLowerCase().includes(q) ||
+        (c.last_text ?? '').toLowerCase().includes(q)
+    )
     : chats;
 
   const renderItem = ({ item }: { item: ChatRow }) => {
@@ -195,23 +221,29 @@ export default function Chats() {
         <Text style={{ fontSize: 28, fontWeight: '800', color: '#111' }}>Чаты</Text>
       </View>
 
-      <TextInput
-        style={styles.search}
-        placeholder="Поиск"
-        placeholderTextColor="#8a8f98"
-        value={query}
-        onChangeText={setQuery}
-        autoCapitalize="none"
-        autoCorrect={false}
-        clearButtonMode="while-editing"
-      />
+      <View style={styles.searchBox}>
+        <Ionicons name="search" size={20} color="#8a8f98" />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Поиск"
+          placeholderTextColor="#8a8f98"
+          value={query}
+          onChangeText={setQuery}
+          autoCapitalize="none"
+          autoCorrect={false}
+          clearButtonMode="while-editing"
+        />
+      </View>
 
       <FlatList
+        overScrollMode="always"
         data={shown}
+        bounces
+        alwaysBounceVertical
         keyExtractor={(item) => item.chat_id}
         renderItem={renderItem}
         keyboardShouldPersistTaps="handled"
-        ItemSeparatorComponent={() => <View style={styles.separator} />}
+
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
         contentContainerStyle={{ paddingBottom: 100 + insets.bottom }}
         ListEmptyComponent={
@@ -238,26 +270,51 @@ export default function Chats() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  search: {
+  container: { flex: 1, backgroundColor: '#cbddf8' },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginHorizontal: 16,
     marginTop: 10,
-    marginBottom: 4,
-    backgroundColor: '#f2f4f7',
-    borderRadius: 24,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    marginBottom: 16,
+    paddingHorizontal: 18,
+    backgroundColor: 'rgba(255,255,255,0.97)',
+    borderRadius: 30,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  searchInput: {
+    flex: 1,
+    marginLeft: 8,
+    paddingVertical: 14,
     fontSize: 16,
     color: '#111',
   },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10 },
-  rowPressed: { backgroundColor: '#f2f4f7' },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(255,255,255,0.97)',
+    borderRadius: 16,
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  rowPressed: { backgroundColor: '#eef1f5', transform: [{ scale: 1.01 }] },
   rowBody: { flex: 1, marginLeft: 14 },
   rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   rowBottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 3 },
   name: { flex: 1, fontSize: 17, fontWeight: '600', color: '#111', marginRight: 8 },
   time: { fontSize: 13, color: '#8a8f98' },
-  timeUnread: { color: '#2563eb', fontWeight: '600' },
+  timeUnread: { color: '#2a8bf2', fontWeight: '600' },
   preview: { flex: 1, fontSize: 15, color: '#8a8f98', marginRight: 8 },
   previewUnread: { color: '#333' },
   badge: {
@@ -265,12 +322,12 @@ const styles = StyleSheet.create({
     height: 22,
     paddingHorizontal: 6,
     borderRadius: 11,
-    backgroundColor: '#2563eb',
+    backgroundColor: '#2a8bf2',
     alignItems: 'center',
     justifyContent: 'center',
   },
   badgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  separator: { height: StyleSheet.hairlineWidth, backgroundColor: '#e3e6ea', marginLeft: 84 },
+
   emptyBox: { alignItems: 'center', marginTop: 90, paddingHorizontal: 32 },
   emptyIcon: { fontSize: 48, marginBottom: 12 },
   emptyTitle: { fontSize: 18, fontWeight: '600', color: '#222', marginBottom: 6 },

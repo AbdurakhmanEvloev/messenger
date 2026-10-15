@@ -1,14 +1,16 @@
 // src/app/chat/[id].tsx — экран чата с текстом, голосовыми, фото и профилем собеседника (полный файл)
 import {
   AudioModule,
-  RecordingPresets,
   createAudioPlayer,
+  RecordingPresets,
   setAudioModeAsync,
   useAudioRecorder,
 } from 'expo-audio';
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
+import { NavigationBar } from 'expo-navigation-bar';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
@@ -25,6 +27,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useColorScheme,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -86,30 +89,50 @@ function formatLastSeen(iso: string | null) {
 const PHOTO_MAX_W = 240;
 const PHOTO_MAX_H = 320;
 
+// Записная книжка: путь к фото -> адрес и размер (адрес живёт час, берём с запасом)
+const photoCache = new Map<string, { url: string; width: number; height: number; at: number }>();
+
+function getCachedPhoto(path: string) {
+  const c = photoCache.get(path);
+  return c && Date.now() - c.at < 50 * 60 * 1000 ? c : null;
+}
+
 function ImageBubble({ path, onLongPress }: { path: string; onLongPress?: () => void }) {
-  const [url, setUrl] = useState<string | null>(null);
+  const cached = getCachedPhoto(path);
+  const [url, setUrl] = useState<string | null>(cached?.url ?? null);
   const [open, setOpen] = useState(false);
-  const [size, setSize] = useState({ width: 220, height: 220 });
+  const [size, setSize] = useState(
+    cached ? { width: cached.width, height: cached.height } : { width: 220, height: 220 }
+  );
 
   useEffect(() => {
+    if (getCachedPhoto(path)) return; // уже знаем, ничего не спрашиваем
+
     let active = true;
+
     supabase.storage
       .from('photos')
       .createSignedUrl(path, 3600)
       .then(({ data }) => {
-        if (!active || !data) return;
-        setUrl(data.signedUrl);
-        // Узнаём размеры фото и подгоняем пузырь под его пропорции
+        if (!data) return;
+        const signedUrl = data.signedUrl;
+
         Image.getSize(
-          data.signedUrl,
+          signedUrl,
           (w, h) => {
-            if (!active || !w || !h) return;
             const scale = Math.min(PHOTO_MAX_W / w, PHOTO_MAX_H / h);
-            setSize({ width: Math.round(w * scale), height: Math.round(h * scale) });
+            const s = { width: Math.round(w * scale), height: Math.round(h * scale) };
+            photoCache.set(path, { url: signedUrl, ...s, at: Date.now() }); // записали в книжку
+            if (!active) return;
+            setSize(s);
+            setUrl(signedUrl); // показываем фото только когда размер уже известен
           },
-          () => { }
+          () => {
+            if (active) setUrl(signedUrl); // не узнали размер, показываем как есть
+          }
         );
       });
+
     return () => {
       active = false;
     };
@@ -126,6 +149,7 @@ function ImageBubble({ path, onLongPress }: { path: string; onLongPress?: () => 
           resizeMode="cover"
         />
       </Pressable>
+
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.viewer} onPress={() => setOpen(false)}>
           <Image source={{ uri: url }} style={styles.viewerImage} resizeMode="contain" />
@@ -360,10 +384,12 @@ function SwipeToReply({ children, onReply }: { children: ReactNode; onReply: () 
 
 // ---------- Экран чата ----------
 export default function ChatScreen() {
+  const PAGE_SIZE = 30;
   const { id, name } = useLocalSearchParams<{ id: string; name?: string }>();
   const chatId = String(id);
   const router = useRouter();
   const insets = useSafeAreaInsets(); // отступ снизу, чтобы панель не пряталась под системной кнопкой
+  const scheme = useColorScheme();
 
   const [userId, setUserId] = useState<string | null>(null);
   const [inputH, setInputH] = useState(64); // высота панели ввода, чтобы список знал, сколько места оставить
@@ -376,9 +402,15 @@ export default function ChatScreen() {
   const [otherReadAt, setOtherReadAt] = useState<string | null>(null); // когда собеседник последний раз читал чат
   const [peerAvatar, setPeerAvatar] = useState<string | null>(null);
   const [peerId, setPeerId] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(true); // есть ли ещё старые сообщения
+  const loadingMore = useRef(false);            // чтобы не слать два запроса сразу
   const [calling, setCalling] = useState(false);
   const [peerLastSeen, setPeerLastSeen] = useState<string | null>(null);
   const [bg, setBg] = useState<string | null>(null);
+
+  // Светлые иконки (время, батарея, кнопки навигации) нужны только на тёмном фоне.
+  // Без обоев фон белый, значит иконки тёмные. С обоями ориентируемся на тему телефона.
+  const lightIcons = !!bg && scheme === 'dark';
 
   useEffect(() => {
     getWallpaper().then(setBg);
@@ -426,14 +458,15 @@ export default function ChatScreen() {
   // Аватарка собеседника для шапки
   useEffect(() => {
     (async () => {
-      const { data: u } = await supabase.auth.getUser();
+      const { data: s } = await supabase.auth.getSession();
+      const myId = s.session?.user.id ?? '';
       const { data } = await supabase
         .from('chat_members')
         .select('user_id, profiles(avatar_path)')
         .eq('chat_id', chatId)
-        .neq('user_id', u.user?.id ?? '')
+        .neq('user_id', myId)
         .limit(1)
-        .single();
+        .single();;
       setPeerAvatar((data as any)?.profiles?.avatar_path ?? null);
       setPeerId((data as any)?.user_id ?? null);
     })();
@@ -502,11 +535,12 @@ export default function ChatScreen() {
 
   // Кто я
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      const uid = data.user?.id ?? null;
+    supabase.auth.getSession().then(({ data }) => {
+      const uid = data.session?.user.id ?? null;
       userIdRef.current = uid;
       setUserId(uid);
       fetchOtherRead();
+
     });
   }, [fetchOtherRead]);
 
@@ -532,10 +566,12 @@ export default function ChatScreen() {
       .select('*')
       .eq('chat_id', chatId)
       .order('created_at', { ascending: false })
+      .limit(PAGE_SIZE)
       .then(({ data, error }) => {
         if (!active) return;
         if (error) Alert.alert('Ошибка', error.message);
         else setMessages((data ?? []) as Message[]);
+        setHasMore((data ?? []).length === PAGE_SIZE);
         markRead();
       });
 
@@ -559,7 +595,7 @@ export default function ChatScreen() {
             const m = payload.new as Message;
             setMessages((prev) => (prev.some((x) => x.id === m.id) ? prev : [m, ...prev]));
             setTypingKind(null);
-            markRead();
+            if (m.sender_id !== userIdRef.current) markRead();
           }
         )
         // Сообщение удалили: убираем его из списка (у удаления нет фильтра по чату, но id уникален)
@@ -592,6 +628,30 @@ export default function ChatScreen() {
     };
   }, [chatId, markRead, fetchOtherRead]);
 
+  // Подгрузить более старые сообщения
+  const loadOlder = useCallback(async () => {
+    if (loadingMore.current || !hasMore || messages.length === 0) return;
+    loadingMore.current = true;
+
+    const oldest = messages[messages.length - 1].created_at; // список идёт от новых к старым
+    const { data, error } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('chat_id', chatId)
+      .lt('created_at', oldest)
+      .order('created_at', { ascending: false })
+      .limit(PAGE_SIZE);
+
+    if (!error && data) {
+      setMessages((prev) => {
+        const ids = new Set(prev.map((m) => m.id));
+        return [...prev, ...(data as Message[]).filter((m) => !ids.has(m.id))];
+      });
+      setHasMore(data.length === PAGE_SIZE);
+    }
+    loadingMore.current = false;
+  }, [chatId, hasMore, messages]);
+
   // Ввод текста: заодно говорим собеседнику «печатает…»
   const onChangeText = (value: string) => {
     setText(value);
@@ -603,19 +663,24 @@ export default function ChatScreen() {
     const value = text.trim();
     if (!value || !userId) return;
     setText('');
-    const { error } = await supabase
+
+    const { data, error } = await supabase
       .from('messages')
-      .insert({ chat_id: chatId, sender_id: userId, text: value, reply_to: replyTo?.id ?? null });
-    setReplyTo(null);
+      .insert({ chat_id: chatId, sender_id: userId, text: value })
+      .select()
+      .single();
+
     if (error) {
-      if (error.message.includes('blocked')) {
-        checkBlock();
-        Alert.alert('Сообщение не отправлено', 'Переписка недоступна: один из вас заблокировал другого.');
-      } else {
-        Alert.alert('Ошибка', error.message);
-      }
+      setText(value); // вернули текст обратно в поле
+      Alert.alert('Ошибка', error.message);
+      return;
     }
-  }, [text, userId, chatId, checkBlock]);
+
+    // показываем своё сообщение сразу, не дожидаясь realtime
+    setMessages((prev) =>
+      prev.some((x) => x.id === data.id) ? prev : [data as Message, ...prev]
+    );
+  }, [text, userId, chatId]);
 
   // Начать запись
   const startRecording = async () => {
@@ -636,7 +701,7 @@ export default function ChatScreen() {
 
   // Остановить запись и отправить
   const stopAndSend = async () => {
-    console.log('[VOICE] 0. нажата кнопка ■, userId =', userId);
+
     if (!userId) {
       Alert.alert('Ошибка', 'Не определён пользователь. Выйдите и войдите заново.');
       return;
@@ -644,11 +709,11 @@ export default function ChatScreen() {
     setRecording(false);
     setSending(true);
     try {
-      console.log('[VOICE] 1. останавливаю запись');
+
       await recorder.stop();
       await setAudioModeAsync({ allowsRecording: false });
       const uri = recorder.uri;
-      console.log('[VOICE] 2. файл записи:', uri);
+
       if (!uri) throw new Error('Запись не сохранилась');
 
       // Папка = id пользователя: так требует правило безопасности бакета voice
@@ -659,19 +724,13 @@ export default function ChatScreen() {
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      console.log('[VOICE] размер файла, байт:', bytes.length);
-      if (bytes.length < 1000) throw new Error('Запись пустая (' + bytes.length + ' байт)');
 
-      const { error: upErr } = await supabase.storage
-        .from('voice')
-        .upload(path, bytes.buffer, { contentType: 'audio/m4a' });
-      console.log('[VOICE] 3. загрузка в Storage, ошибка:', upErr?.message ?? 'нет');
-      if (upErr) throw upErr;
+      if (bytes.length < 1000) throw new Error('Запись пустая (' + bytes.length + ' байт)');
 
       const { error: insErr } = await supabase
         .from('messages')
         .insert({ chat_id: chatId, sender_id: userId, audio_path: path });
-      console.log('[VOICE] 4. запись в messages, ошибка:', insErr?.message ?? 'нет');
+
       if (insErr) throw insErr;
     } catch (e: any) {
       console.log('[VOICE] ОШИБКА:', e);
@@ -708,13 +767,13 @@ export default function ChatScreen() {
       const asset = result.assets[0];
       const mime = asset.mimeType ?? 'image/jpeg';
       const ext = mime.includes('png') ? 'png' : 'jpg';
-      console.log('[PHOTO] 1. выбрано:', asset.uri, mime);
+
 
       const base64 = await new File(asset.uri).base64();
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-      console.log('[PHOTO] 2. размер, байт:', bytes.length);
+
       if (bytes.length < 500) throw new Error('Файл фото пустой');
 
       // Папка = id пользователя: так требует правило безопасности бакета photos
@@ -722,13 +781,13 @@ export default function ChatScreen() {
       const { error: upErr } = await supabase.storage
         .from('photos')
         .upload(path, bytes.buffer, { contentType: mime });
-      console.log('[PHOTO] 3. загрузка, ошибка:', upErr?.message ?? 'нет');
+
       if (upErr) throw upErr;
 
       const { error: insErr } = await supabase
         .from('messages')
         .insert({ chat_id: chatId, sender_id: userId, image_path: path });
-      console.log('[PHOTO] 4. запись в messages, ошибка:', insErr?.message ?? 'нет');
+
       if (insErr) throw insErr;
     } catch (e: any) {
       console.log('[PHOTO] ОШИБКА:', e);
@@ -742,7 +801,7 @@ export default function ChatScreen() {
   const deleteMessage = async (m: Message) => {
     const { data, error } = await supabase.from('messages').delete().eq('id', m.id).select('id');
     if (error || !data || data.length === 0) {
-      Alert.alert('Не удалось удалить', error?.message ?? 'Нет прав на удаление. Выполнен ли SQL из файла 8-small-things-sql?');
+      Alert.alert('Не удалось удалить', error?.message ?? 'Не удалось удалить сообщение');
       return;
     }
     setMessages((prev) => prev.filter((x) => x.id !== m.id));
@@ -855,6 +914,10 @@ export default function ChatScreen() {
       behavior="padding"
     >
       <Stack.Screen options={{ headerShown: false }} />
+      {/* Время и батарея: светлые на тёмном фоне, тёмные на светлом */}
+      <StatusBar style={lightIcons ? 'light' : 'dark'} />
+      {/* Кнопки навигации Android (у NavigationBar значения наоборот: 'light' = тёмные кнопки) */}
+      <NavigationBar style={lightIcons ? 'dark' : 'light'} />
       {bg && <Image source={{ uri: bg }} style={StyleSheet.absoluteFill} resizeMode="cover" />}
 
       <FlatList
@@ -863,9 +926,11 @@ export default function ChatScreen() {
         overScrollMode="always"
         data={messages}
         inverted
+        onEndReached={loadOlder}
+        onEndReachedThreshold={0.5}
         keyExtractor={(m) => m.id}
         renderItem={renderItem}
-        extraData={otherReadAt}
+        extraData={`${otherReadAt}|${userId}`}
         contentContainerStyle={[styles.list, { paddingTop: inputH + 8, paddingBottom: insets.top + 70 }]}
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="none"
@@ -922,7 +987,7 @@ export default function ChatScreen() {
       {blockState !== 'none' ? (
         <View
           style={{
-            backgroundColor: '#fff',
+            backgroundColor: 'rgba(255,255,255,0.9)',
             paddingTop: 14,
             paddingHorizontal: 20,
             paddingBottom: 14 + insets.bottom,
@@ -1060,17 +1125,17 @@ const styles = StyleSheet.create({
   bubble: { maxWidth: '80%', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 18 },
   bubbleMine: { backgroundColor: '#2f80ed' },
   bubbleTheirs: { backgroundColor: '#f1f3f4' },
-  tailMine: { borderBottomRightRadius: 4 },
-  tailTheirs: { borderBottomLeftRadius: 4 },
+
+
   bubbleImage: { paddingHorizontal: 0, paddingVertical: 0, overflow: 'hidden' },
   msgText: { fontSize: 16, color: '#111' },
   msgTextMine: { color: '#fff' },
-  msgTime: { alignSelf: 'flex-end', fontSize: 11, color: '#8a8f98', marginTop: 2, marginRight: 2 },
-  msgTimeMine: { color: '#7a7585' },
+
+
   textRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'flex-end' },
-  msgTimeInline: { marginLeft: 10, marginTop: 0, marginRight: 0, marginBottom: 1 },
+
   tailFirst: { borderTopLeftRadius: 3 },
-  msgTimeOnPhoto: {
+  replyBar: {
     position: 'absolute',
     right: 8,
     bottom: 6,
@@ -1083,7 +1148,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.45)',
     color: '#fff',
   },
-  tickRead: { color: '#2f80ed', fontWeight: '700' },
+
   headerRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerName: { fontSize: 17, fontWeight: '700', color: '#111' },
   headerTyping: { fontSize: 12, color: '#2563eb' },
@@ -1142,21 +1207,7 @@ const styles = StyleSheet.create({
   quoteMine: { borderLeftColor: '#222423' },
   quoteTheirs: { borderLeftColor: '#2f80ed' },
   quoteText: { fontSize: 13, color: '#070707' },
-  replyBar: {
-    position: 'absolute',
-    left: 8,
-    right: 8,
-    bottom: '100%',
-    marginBottom: 4,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 14,
-    borderLeftWidth: 3,
-    borderLeftColor: '#2f80ed',
-  },
+
   replyTitle: { fontSize: 12, fontWeight: '700', color: '#2f80ed' },
   replyText: { fontSize: 14, color: '#555' },
 
@@ -1213,8 +1264,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  attachText: { fontSize: 22 },
-  photo: { width: 220, height: 220, borderRadius: 0 },
+
+
   photoPlaceholder: { width: 220, height: 220, borderRadius: 0, backgroundColor: 'rgba(0,0,0,0.08)' },
   viewer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', justifyContent: 'center' },
   viewerImage: { width: '100%', height: '100%' },
