@@ -1,4 +1,4 @@
-// src/app/call/[id].tsx — экран голосового звонка (исходящий, входящий и разговор)
+// src/app/call/[id].tsx — экран звонка (голос и видео: исходящий, входящий и разговор)
 let AudioSession: any = null;
 let registerGlobals: any = null;
 let VideoTrack: any = null;
@@ -17,18 +17,24 @@ import { AudioModule } from 'expo-audio';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import type { Room as LKRoom } from 'livekit-client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Image, PermissionsAndroid, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  BackHandler,
+  Image,
+  PermissionsAndroid,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../../components/Avatar';
 import { CallRow, CallStatus, fetchCallToken, friendlyCallError, setCallStatus } from '../../lib/calls';
 import { supabase } from '../../lib/supabase';
 
 if (livekitReady) registerGlobals();
-async function ensureCameraPermission() {
-  if (Platform.OS !== 'android') return true;
-  const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
-  return r === PermissionsAndroid.RESULTS.GRANTED;
-}
 
 type Phase = 'loading' | 'ringing' | 'connecting' | 'live' | 'ended';
 
@@ -36,6 +42,13 @@ function fmt(sec: number) {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+
+// Разрешение на камеру (на Android его нужно спросить вручную)
+async function ensureCameraPermission() {
+  if (Platform.OS !== 'android') return true;
+  const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+  return r === PermissionsAndroid.RESULTS.GRANTED;
 }
 
 export default function CallScreen() {
@@ -62,6 +75,7 @@ export default function CallScreen() {
   const roleRef = useRef<'caller' | 'callee'>('caller');
   const finishedRef = useRef(false);
   const connectingRef = useRef(false);
+  const wantVideoRef = useRef(false);
   const audioStartedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -119,6 +133,14 @@ export default function CallScreen() {
         return;
       }
 
+      // Android: микрофон и Bluetooth-звук (на Android 12+ без этого бывают зависания)
+      if (Platform.OS === 'android') {
+        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+        if (Number(Platform.Version) >= 31) {
+          await PermissionsAndroid.request('android.permission.BLUETOOTH_CONNECT' as any);
+        }
+      }
+
       await AudioSession.startAudioSession();
       audioStartedRef.current = true;
 
@@ -134,7 +156,7 @@ export default function CallScreen() {
         setCallStatus(callId, 'ended').catch(() => { });
         finish('Звонок завершён');
       });
-
+      // Видео: обновляем картинку, когда что-то изменилось
       room.on(RoomEvent.TrackSubscribed, refreshVideo);
       room.on(RoomEvent.TrackUnsubscribed, refreshVideo);
       room.on(RoomEvent.TrackMuted, refreshVideo);
@@ -143,12 +165,6 @@ export default function CallScreen() {
       room.on(RoomEvent.LocalTrackUnpublished, refreshVideo);
 
       await room.connect(url, token);
-      await room.localParticipant.setMicrophoneEnabled(true);
-      if (video === '1' && (await ensureCameraPermission())) {
-        await room.localParticipant.setCameraEnabled(true);
-        setCamOn(true);
-        refreshVideo();
-      }
 
       if (finishedRef.current) {
         room.disconnect();
@@ -156,6 +172,23 @@ export default function CallScreen() {
       }
       setPhase('live');
       timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+
+      // Микрофон включаем уже после «разговора»; если не вышло, показываем причину
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+      } catch (e: any) {
+        Alert.alert('Микрофон не включился', String(e?.message ?? e));
+      }
+
+      if ((video === '1' || wantVideoRef.current) && (await ensureCameraPermission())) {
+        try {
+          await room.localParticipant.setCameraEnabled(true);
+          setCamOn(true);
+          refreshVideo();
+        } catch (e: any) {
+          Alert.alert('Камера не включилась', String(e?.message ?? e));
+        }
+      }
     } catch (e: any) {
       Alert.alert('Не удалось подключиться', friendlyCallError(String(e?.message ?? e)));
       try {
@@ -277,7 +310,9 @@ export default function CallScreen() {
     return () => sub.remove();
   }, [hangup]);
 
-  const accept = async () => {
+  // Ответить на входящий (withVideo = true: сразу с камерой)
+  const accept = async (withVideo = false) => {
+    wantVideoRef.current = withVideo;
     try {
       await setCallStatus(callId, 'accepted');
       statusRef.current = 'accepted';
@@ -305,6 +340,7 @@ export default function CallScreen() {
     } catch { }
   };
 
+  // Включить / выключить свою камеру
   const toggleCamera = async () => {
     const room = roomRef.current;
     if (!room) return;
@@ -321,6 +357,7 @@ export default function CallScreen() {
     }
   };
 
+  // Переключить фронтальную и заднюю камеру
   const flipCamera = async () => {
     try {
       const pub: any = roomRef.current?.localParticipant.getTrackPublication(Track.Source.Camera);
@@ -379,10 +416,16 @@ export default function CallScreen() {
             <Text style={styles.btnLabel}>Отклонить</Text>
           </View>
           <View style={styles.btnBox}>
-            <Pressable style={[styles.circle, styles.green]} onPress={accept}>
+            <Pressable style={[styles.circle, styles.green]} onPress={() => accept(false)}>
               <Image source={require('../../../assets/icons/phon.png')} style={styles.icon} />
             </Pressable>
             <Text style={styles.btnLabel}>Ответить</Text>
+          </View>
+          <View style={styles.btnBox}>
+            <Pressable style={[styles.circle, styles.green]} onPress={() => accept(true)}>
+              <Text style={styles.emoji}>🎥</Text>
+            </Pressable>
+            <Text style={styles.btnLabel}>С видео</Text>
           </View>
         </View>
       )}
@@ -429,8 +472,6 @@ const styles = StyleSheet.create({
   statusLive: { color: '#2563eb', fontWeight: '600' },
   buttonsRow: { flexDirection: 'row', justifyContent: 'space-evenly', alignItems: 'flex-start' },
   btnBox: { alignItems: 'center', width: 80 },
-  selfView: { position: 'absolute', right: 16, width: 110, height: 160, borderRadius: 14, overflow: 'hidden', backgroundColor: '#000', zIndex: 5 },
-  flipBtn: { position: 'absolute', bottom: 6, right: 6, width: 30, height: 30, borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
   circle: { width: 68, height: 68, borderRadius: 34, alignItems: 'center', justifyContent: 'center' },
   gray: { backgroundColor: '#f2f4f7' },
   dark: { backgroundColor: '#d5d9df' },
@@ -440,4 +481,25 @@ const styles = StyleSheet.create({
   iconEnd: { transform: [{ rotate: '135deg' }] },
   emoji: { fontSize: 28 },
   btnLabel: { fontSize: 13, color: '#8a8f98', marginTop: 8 },
+  selfView: {
+    position: 'absolute',
+    right: 16,
+    width: 110,
+    height: 160,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+    zIndex: 5,
+  },
+  flipBtn: {
+    position: 'absolute',
+    bottom: 6,
+    right: 6,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
 });

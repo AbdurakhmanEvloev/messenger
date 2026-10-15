@@ -381,8 +381,8 @@ export default function ChatScreen() {
   const [bg, setBg] = useState<string | null>(null);
 
   useEffect(() => {
-  getWallpaper().then(setBg);
-}, []);
+    getWallpaper().then(setBg);
+  }, []);
   // Блокировка: none — всё хорошо, i_blocked — я заблокировала, blocked_me — меня заблокировали
   const [blockState, setBlockState] = useState<'none' | 'i_blocked' | 'blocked_me'>('none');
 
@@ -751,7 +751,7 @@ export default function ChatScreen() {
   };
 
   // Позвонить собеседнику (голосовой звонок)
-  const startVoiceCall = async () => {
+  const startVoiceCall = async (withVideo = false) => {
     if (calling) return;
     if (blockState !== 'none') {
       Alert.alert('Звонок недоступен', 'Один из вас заблокировал другого.');
@@ -760,7 +760,7 @@ export default function ChatScreen() {
     setCalling(true);
     try {
       const callId = await startCall(chatId);
-      router.push(`/call/${callId}` as any);
+      router.push(`/call/${callId}${withVideo ? '?video=1' : ''}` as any);
     } catch (e: any) {
       Alert.alert('Не удалось позвонить', friendlyCallError(String(e?.message ?? e)));
     } finally {
@@ -902,13 +902,15 @@ export default function ChatScreen() {
           </View>
         </Pressable>
 
-        <Pressable style={styles.circleBtn} onPress={startVoiceCall} disabled={calling}>
+        <Pressable style={styles.circleBtn} onPress={() => startVoiceCall(false)} disabled={calling}>
           <Image
             source={require('../../../assets/icons/phon.png')}
             style={{ width: 22, height: 22, tintColor: '#111' }}
           />
         </Pressable>
-
+        <Pressable style={styles.circleBtn} onPress={() => startVoiceCall(true)} disabled={calling}>
+          <Text style={{ fontSize: 20 }}>🎥</Text>
+        </Pressable>
         <Pressable style={styles.circleBtn} onPress={() => Alert.alert('Меню', 'Здесь скоро будут функции')}>
           <Image
             source={require('../../../assets/icons/menu.png')}
