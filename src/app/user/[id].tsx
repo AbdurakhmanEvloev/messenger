@@ -1,4 +1,6 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
+// src/app/user/[id].tsx — профиль другого пользователя
+
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -10,7 +12,9 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../../components/Avatar';
+import BottomBubble from '../../components/BottomBubble';
 import { supabase } from '../../lib/supabase';
 
 type Profile = {
@@ -40,6 +44,8 @@ function formatBirthday(s: string | null) {
 export default function UserProfile() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+
   const [profile, setProfile] = useState<Profile | null>(null);
   const [me, setMe] = useState<string | null>(null);
   const [fr, setFr] = useState<Friendship | null>(null);
@@ -67,12 +73,14 @@ export default function UserProfile() {
       const { data: u } = await supabase.auth.getUser();
       const meId = u.user?.id ?? null;
       setMe(meId);
+
       const { data } = await supabase
         .from('profiles')
         .select('username, nickname, avatar_path, bio, created_at, birthday')
         .eq('id', id)
         .single();
       setProfile((data as Profile) ?? null);
+
       if (meId) {
         await loadFriendship(meId);
         const { data: b } = await supabase
@@ -191,6 +199,7 @@ export default function UserProfile() {
   if (loading) {
     return (
       <View style={styles.center}>
+        <Stack.Screen options={{ headerShown: false }} />
         <ActivityIndicator color="#2563eb" />
       </View>
     );
@@ -204,10 +213,10 @@ export default function UserProfile() {
         : rel === 'received'
           ? 'Принять заявку'
           : 'В друзьях';
-  const friendFilled = rel === 'none' || rel === 'received';
+  // синяя кнопка — когда есть действие «добавить/принять», иначе белая
+  const friendBlue = rel === 'none' || rel === 'received';
 
   const birthdayText = formatBirthday(profile?.birthday ?? null);
-
   const registered = profile?.created_at
     ? new Date(profile.created_at).toLocaleDateString('ru-RU', {
         day: 'numeric',
@@ -217,53 +226,86 @@ export default function UserProfile() {
     : null;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Avatar name={name} path={profile?.avatar_path ?? null} size={92} />
+    <View style={styles.screen}>
+      <Stack.Screen options={{ headerShown: false }} />
 
-      <Text style={styles.name}>{name}</Text>
-      {profile?.nickname ? <Text style={styles.nick}>@{profile.nickname}</Text> : null}
-      {profile?.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
-      {birthdayText ? <Text style={styles.joined}>День рождения: {birthdayText}</Text> : null}
-      {registered ? <Text style={styles.joined}>Дата регистрации: {registered}</Text> : null}
-
-      <View style={styles.buttons}>
-        <Pressable
-          style={({ pressed }) => [styles.btn, styles.btnOutline, pressed && { opacity: 0.7 }]}
-          onPress={writeMessage}
-          disabled={busy}
-        >
-          <Text style={styles.btnOutlineText}>Написать</Text>
-        </Pressable>
-        {!blocked ? (
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 120 + insets.bottom }}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
           <Pressable
-            style={({ pressed }) => [
-              styles.btn,
-              friendFilled ? styles.btnFilled : styles.btnOutline,
-              pressed && { opacity: 0.7 },
-            ]}
-            onPress={onFriend}
+            style={({ pressed }) => [styles.back, pressed && styles.pressed]}
+            onPress={() => router.back()}
+            hitSlop={8}
+          >
+            <Text style={styles.backText}>‹</Text>
+          </Pressable>
+          <Text style={styles.title}>Профиль</Text>
+        </View>
+
+        {/* карточка с данными */}
+        <View style={styles.card}>
+          <Avatar name={name} path={profile?.avatar_path ?? null} size={92} />
+          <Text style={styles.name}>{name}</Text>
+          {profile?.nickname ? <Text style={styles.nick}>@{profile.nickname}</Text> : null}
+          {profile?.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
+          {birthdayText ? <Text style={styles.meta}>День рождения: {birthdayText}</Text> : null}
+          {registered ? <Text style={styles.meta}>Дата регистрации: {registered}</Text> : null}
+        </View>
+
+        {/* кнопки-таблетки */}
+        <View style={styles.buttons}>
+          <Pressable
+            style={({ pressed }) => [styles.btn, styles.btnLight, pressed && styles.pressed]}
+            onPress={writeMessage}
             disabled={busy}
           >
-            <Text style={friendFilled ? styles.btnFilledText : styles.btnOutlineText} numberOfLines={1}>
-              {friendLabel}
-            </Text>
+            <Text style={styles.btnLightText}>Написать</Text>
           </Pressable>
-        ) : null}
-      </View>
+          {!blocked ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.btn,
+                friendBlue ? styles.btnBlue : styles.btnLight,
+                pressed && styles.pressed,
+              ]}
+              onPress={onFriend}
+              disabled={busy}
+            >
+              <Text style={friendBlue ? styles.btnBlueText : styles.btnLightText} numberOfLines={1}>
+                {friendLabel}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
 
-      <View style={styles.menu}>
-        <Pressable style={styles.menuRow} onPress={clearChat}>
-          <Text style={styles.menuText}>Очистить чат</Text>
-        </Pressable>
-        <View style={styles.menuLine} />
-        <Pressable style={styles.menuRow} onPress={toggleBlock}>
-          <Text style={styles.menuDanger}>{blocked ? 'Разблокировать' : 'Заблокировать'}</Text>
-        </Pressable>
-        <View style={styles.menuLine} />
-        <Pressable style={styles.menuRow} onPress={() => setReportOpen(true)}>
-          <Text style={styles.menuDanger}>Пожаловаться</Text>
-        </Pressable>
-      </View>
+        {/* меню */}
+        <View style={styles.menu}>
+          <Pressable
+            style={({ pressed }) => [styles.menuRow, pressed && styles.menuPressed]}
+            onPress={clearChat}
+          >
+            <Text style={styles.menuText}>Очистить чат</Text>
+          </Pressable>
+          <View style={styles.menuLine} />
+          <Pressable
+            style={({ pressed }) => [styles.menuRow, pressed && styles.menuPressed]}
+            onPress={toggleBlock}
+          >
+            <Text style={styles.menuDanger}>{blocked ? 'Разблокировать' : 'Заблокировать'}</Text>
+          </Pressable>
+          <View style={styles.menuLine} />
+          <Pressable
+            style={({ pressed }) => [styles.menuRow, pressed && styles.menuPressed]}
+            onPress={() => setReportOpen(true)}
+          >
+            <Text style={styles.menuDanger}>Пожаловаться</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+
+      <BottomBubble active="profile" />
 
       <Modal visible={reportOpen} transparent animationType="fade" onRequestClose={() => setReportOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setReportOpen(false)}>
@@ -280,31 +322,80 @@ export default function UserProfile() {
           </Pressable>
         </Pressable>
       </Modal>
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
-  center: { flex: 1, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' },
-  content: { padding: 16, paddingBottom: 40 },
+  screen: { flex: 1, backgroundColor: '#f2f4f9' },
+  center: { flex: 1, backgroundColor: '#f2f4f9', alignItems: 'center', justifyContent: 'center' },
+
+  header: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  back: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backText: { fontSize: 28, lineHeight: 30, color: '#111', marginTop: -2 },
+  title: { fontSize: 32, fontWeight: '800', color: '#111' },
+
+  card: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    padding: 18,
+    borderRadius: 24,
+    backgroundColor: '#fff',
+  },
   name: { fontSize: 22, fontWeight: '800', color: '#111', marginTop: 14 },
-  nick: { fontSize: 15, color: '#8a8f98', marginTop: 1 },
+  nick: { fontSize: 15, color: '#5f6368', marginTop: 2 },
   bio: { fontSize: 16, color: '#111', marginTop: 12, lineHeight: 22 },
-  joined: { fontSize: 14, color: '#8a8f98', marginTop: 8 },
-  buttons: { flexDirection: 'row', gap: 10, marginTop: 20 },
-  btn: { flex: 1, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
-  btnFilled: { backgroundColor: '#111' },
-  btnFilledText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  btnOutline: { borderWidth: 1, borderColor: '#cfd4da', backgroundColor: '#fff' },
-  btnOutlineText: { color: '#111', fontSize: 15, fontWeight: '700' },
-  menu: { backgroundColor: '#f2f4f7', borderRadius: 14, marginTop: 32 },
-  menuRow: { paddingVertical: 15, paddingHorizontal: 16 },
-  menuLine: { height: StyleSheet.hairlineWidth, backgroundColor: '#d9dde3', marginLeft: 16 },
+  meta: { fontSize: 14, color: '#5f6368', marginTop: 8 },
+
+  buttons: { flexDirection: 'row', gap: 10, marginHorizontal: 16, marginTop: 12 },
+  btn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  btnLight: { backgroundColor: '#fff' },
+  btnLightText: { color: '#111', fontSize: 15, fontWeight: '700' },
+  btnBlue: { backgroundColor: '#2563eb' },
+  btnBlueText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  pressed: { opacity: 0.75 },
+
+  menu: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderRadius: 24,
+    backgroundColor: '#fff',
+    overflow: 'hidden',
+  },
+  menuRow: { paddingVertical: 17, paddingHorizontal: 18 },
+  menuPressed: { backgroundColor: '#eef1f6' },
+  menuLine: { height: StyleSheet.hairlineWidth, backgroundColor: '#e3e6ea', marginLeft: 18 },
   menuText: { fontSize: 16, color: '#111' },
   menuDanger: { fontSize: 16, color: '#dc2626' },
+
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  sheet: { backgroundColor: '#fff', borderTopLeftRadius: 18, borderTopRightRadius: 18, padding: 16, paddingBottom: 32 },
+  sheet: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 18,
+    paddingBottom: 32,
+  },
   sheetTitle: { fontSize: 17, fontWeight: '700', color: '#111', marginBottom: 8 },
   sheetRow: { paddingVertical: 14 },
   sheetText: { fontSize: 16, color: '#111' },
