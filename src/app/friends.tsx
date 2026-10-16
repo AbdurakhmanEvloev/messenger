@@ -240,7 +240,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    borderRadius: 24,
+    borderRadius: 18,
     backgroundColor: '#fff',
   },
   cardPressed: { backgroundColor: '#eef1f6' },
