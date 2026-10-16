@@ -217,7 +217,7 @@ export default function Chats() {
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
 
-      <View style={{ paddingTop: insets.top + 8, paddingHorizontal: 16, paddingBottom: 4 }}>
+      <View style={{ paddingTop: insets.top + 22, paddingHorizontal: 16, paddingBottom: 4 }}>
         <Text style={{ fontSize: 28, fontWeight: '800', color: '#111' }}>Чаты</Text>
       </View>
 
@@ -272,53 +272,29 @@ export default function Chats() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f2f4f7' },
   searchBox: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  marginHorizontal: 16,
-  marginTop: 10,
-  marginBottom: 4,
-  height: 46,
-  borderRadius: 23,
-  backgroundColor: '#fff',
-  borderWidth: 1,
-  borderColor: '#d5d9de',
-  paddingHorizontal: 14,
-},
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginTop: 28,
+    marginBottom: 4,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: '#fff',
+    paddingHorizontal: 14,
+  },
   searchInput: { flex: 1, marginLeft: 8, fontSize: 16, color: '#111', paddingVertical: 0 },
   row: {
-  flexDirection: 'row',
-  alignItems: 'center',
-  marginHorizontal: 16,
-  marginVertical: 4,
-  paddingHorizontal: 12,
-  paddingVertical: 10,
-  borderRadius: 24,
-  backgroundColor: '#fff',
-  borderWidth: 1,
-  borderColor: '#d5d9de',
-},
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginVertical: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 24,
+    backgroundColor: '#fff',
+  },
 
-bubble: {
-  flexDirection: 'row',
-  backgroundColor: '#fff',
-  borderRadius: 28,
-  padding: 4,
-  borderWidth: 1,
-  borderColor: '#d5d9de',
-  elevation: 3,
-  shadowColor: '#000',
-  shadowOpacity: 0.08,
-  shadowRadius: 8,
-  shadowOffset: { width: 0, height: 2 },
-},
-item: {
-  flex: 1,
-  height: 46,
-  alignItems: 'center',
-  justifyContent: 'center',
-  borderRadius: 24,
-},
-label: { fontSize: 10, color: '#111', marginTop: 1, fontWeight: '500' },
+
   rowPressed: { backgroundColor: '#eef1f5', transform: [{ scale: 1.01 }] },
   rowBody: { flex: 1, marginLeft: 14 },
   rowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
