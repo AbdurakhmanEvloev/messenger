@@ -1,14 +1,13 @@
 // src/app/edit-profile.tsx — страница «Изменить профиль»
+
 import { File } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useRouter } from 'expo-router';
-import { ReactNode, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,34 +15,15 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../components/Avatar';
 import { supabase } from '../lib/supabase';
 
-// Имя и фамилия: только буквы, без точек, запятых, цифр и других символов
-const NAME_CHARS = /[^A-Za-zА-Яа-яЁё]/g;
-const NAME_RE = /^[A-Za-zА-Яа-яЁё]{2,30}$/;
-
-function capitalize(s: string) {
-  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-}
-
-// Строка внутри серого блока: слева подпись, справа поле
-function Row({ label, last, children }: { label: string; last?: boolean; children: ReactNode }) {
-  return (
-    <>
-      <View style={styles.row}>
-        <Text style={styles.rowLabel}>{label}</Text>
-        {children}
-      </View>
-      {!last && <View style={styles.line} />}
-    </>
-  );
-}
-
 export default function EditProfile() {
   const router = useRouter();
-  const [firstName, setFirstName] = useState('');
-  const [lastName, setLastName] = useState('');
+  const insets = useSafeAreaInsets();
+
+  const [username, setUsername] = useState('');
   const [nickname, setNickname] = useState('');
   const [bio, setBio] = useState('');
   const [bd, setBd] = useState('');
@@ -65,16 +45,7 @@ export default function EditProfile() {
         .eq('id', data.user.id)
         .single();
       if (p) {
-        // В базе имя и фамилия лежат вместе: «Имя Фамилия»
-        const full = String(p.username ?? '').trim();
-        const space = full.indexOf(' ');
-        if (space === -1) {
-          setFirstName(full);
-          setLastName('');
-        } else {
-          setFirstName(full.slice(0, space));
-          setLastName(full.slice(space + 1).trim());
-        }
+        setUsername(p.username ?? '');
         setAvatarPath(p.avatar_path ?? null);
         setBio(p.bio ?? '');
         setNickname(p.nickname ?? '');
@@ -90,19 +61,11 @@ export default function EditProfile() {
 
   const save = async () => {
     if (saving) return;
-
-    const first = capitalize(firstName.trim());
-    const last = capitalize(lastName.trim());
-    if (!NAME_RE.test(first)) {
-      Alert.alert('Неверное имя', 'Имя: только буквы, от 2 до 30 символов. Точки, запятые и другие символы нельзя');
+    const name = username.trim();
+    if (!name) {
+      Alert.alert('Введите имя', 'Имя не может быть пустым');
       return;
     }
-    if (last && !NAME_RE.test(last)) {
-      Alert.alert('Неверная фамилия', 'Фамилия: только буквы, от 2 до 30 символов. Точки, запятые и другие символы нельзя');
-      return;
-    }
-    const name = last ? first + ' ' + last : first;
-
     const nick = nickname.trim().toLowerCase();
     if (nick && !/^[a-z0-9_]{3,20}$/.test(nick)) {
       Alert.alert('Неверный ник', 'Ник: от 3 до 20 символов, только латинские буквы, цифры и _');
@@ -191,34 +154,34 @@ export default function EditProfile() {
   };
 
   const digits = (t: string) => t.replace(/[^0-9]/g, '');
-  const shownName = (firstName + ' ' + lastName).trim() || '?';
 
   return (
-    <KeyboardAvoidingView style={styles.screen} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <Stack.Screen
-        options={{
-          title: 'Изменить профиль',
-          headerRight: () => (
-            <Pressable onPress={save} disabled={saving} hitSlop={10}>
-              {saving ? (
-                <ActivityIndicator color="#2563eb" />
-              ) : (
-                <Text style={styles.headerSave}>Сохранить</Text>
-              )}
-            </Pressable>
-          ),
-        }}
-      />
+    <View style={styles.screen}>
+      <Stack.Screen options={{ headerShown: false }} />
 
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={{ paddingBottom: 40 + insets.bottom }}
         keyboardShouldPersistTaps="handled"
+        automaticallyAdjustKeyboardInsets
         showsVerticalScrollIndicator={false}
       >
-        {/* Аватар */}
-        <View style={styles.avatarWrap}>
+        <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
+          <Pressable
+            style={({ pressed }) => [styles.back, pressed && styles.pressed]}
+            onPress={() => router.back()}
+            hitSlop={8}
+          >
+            <Text style={styles.backText}>‹</Text>
+          </Pressable>
+          <Text style={styles.title} numberOfLines={1}>
+            Изменить профиль
+          </Text>
+        </View>
+
+        {/* карточка с аватаркой */}
+        <View style={[styles.card, styles.avatarCard]}>
           <Pressable style={styles.avatarBox} onPress={changeAvatar} disabled={uploading}>
-            <Avatar name={shownName} path={avatarPath} size={96} />
+            <Avatar name={username || '?'} path={avatarPath} size={92} />
             <View style={styles.avatarOverlay}>
               {uploading ? (
                 <ActivityIndicator color="#fff" />
@@ -227,172 +190,191 @@ export default function EditProfile() {
               )}
             </View>
           </Pressable>
-          <Pressable onPress={changeAvatar} disabled={uploading} hitSlop={8}>
-            <Text style={styles.changePhoto}>Изменить фото</Text>
-          </Pressable>
+          <Text style={styles.avatarHint}>Нажмите, чтобы сменить фото</Text>
         </View>
 
-        {/* Имя, фамилия, ник */}
+        {/* имя */}
         <View style={styles.card}>
-          <Row label="Имя">
-            <TextInput
-              style={styles.input}
-              value={firstName}
-              onChangeText={(t) => setFirstName(t.replace(NAME_CHARS, ''))}
-              placeholder="Анна"
-              placeholderTextColor="#9aa0a6"
-              autoCapitalize="words"
-              autoCorrect={false}
-              maxLength={30}
-            />
-          </Row>
-          <Row label="Фамилия">
-            <TextInput
-              style={styles.input}
-              value={lastName}
-              onChangeText={(t) => setLastName(t.replace(NAME_CHARS, ''))}
-              placeholder="Иванова"
-              placeholderTextColor="#9aa0a6"
-              autoCapitalize="words"
-              autoCorrect={false}
-              maxLength={30}
-            />
-          </Row>
-          <Row label="Ник" last>
+          <Text style={styles.label}>Имя</Text>
+          <TextInput
+            style={styles.input}
+            value={username}
+            onChangeText={setUsername}
+            placeholder="Как вас называть"
+            placeholderTextColor="#b0b5bc"
+            maxLength={40}
+          />
+        </View>
+
+        {/* ник */}
+        <View style={styles.card}>
+          <Text style={styles.label}>Имя пользователя</Text>
+          <View style={styles.nickRow}>
             <Text style={styles.at}>@</Text>
             <TextInput
               style={[styles.input, styles.nickInput]}
               value={nickname}
               onChangeText={(t) => setNickname(t.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase())}
               placeholder="nickname"
-              placeholderTextColor="#9aa0a6"
+              placeholderTextColor="#b0b5bc"
               autoCapitalize="none"
               autoCorrect={false}
               maxLength={20}
             />
-          </Row>
-        </View>
-        <Text style={styles.hint}>
-          Имя и фамилия — только буквы. Ник: от 3 до 20 символов, латиница, цифры и «_».
-        </Text>
-
-        {/* День рождения */}
-        <View style={styles.card}>
-          <Row label="Дата рождения" last>
-            <View style={styles.dateRow}>
-              <TextInput
-                style={[styles.input, styles.dateSmall]}
-                value={bd}
-                onChangeText={(t) => setBd(digits(t))}
-                placeholder="ДД"
-                placeholderTextColor="#9aa0a6"
-                keyboardType="number-pad"
-                maxLength={2}
-              />
-              <Text style={styles.dateDot}>/</Text>
-              <TextInput
-                style={[styles.input, styles.dateSmall]}
-                value={bm}
-                onChangeText={(t) => setBm(digits(t))}
-                placeholder="ММ"
-                placeholderTextColor="#9aa0a6"
-                keyboardType="number-pad"
-                maxLength={2}
-              />
-              <Text style={styles.dateDot}>/</Text>
-              <TextInput
-                style={[styles.input, styles.dateYear]}
-                value={by}
-                onChangeText={(t) => setBy(digits(t))}
-                placeholder="ГГГГ"
-                placeholderTextColor="#9aa0a6"
-                keyboardType="number-pad"
-                maxLength={4}
-              />
-            </View>
-          </Row>
-        </View>
-        <Text style={styles.hint}>Оставьте пустым, если не хотите показывать</Text>
-
-        {/* О себе */}
-        <View style={styles.card}>
-          <View style={styles.bioBox}>
-            <Text style={styles.bioLabel}>О себе</Text>
-            <TextInput
-              style={styles.bioInput}
-              value={bio}
-              onChangeText={setBio}
-              placeholder="Расскажите о себе"
-              placeholderTextColor="#9aa0a6"
-              maxLength={200}
-              multiline
-            />
-            <Text style={styles.counter}>{bio.length}/200</Text>
           </View>
+          <Text style={styles.hint}>От 3 до 20 символов: латинские буквы, цифры и _</Text>
         </View>
 
-        {/* Кнопка сохранить */}
-        <Pressable
-          style={({ pressed }) => [styles.button, (pressed || saving) && styles.buttonPressed]}
-          onPress={save}
-          disabled={saving}
-        >
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Сохранить</Text>}
-        </Pressable>
+        {/* день рождения */}
+        <View style={styles.card}>
+          <Text style={styles.label}>День рождения</Text>
+          <View style={styles.dateRow}>
+            <TextInput
+              style={[styles.input, styles.dateSmall]}
+              value={bd}
+              onChangeText={(t) => setBd(digits(t))}
+              placeholder="ДД"
+              placeholderTextColor="#b0b5bc"
+              keyboardType="number-pad"
+              maxLength={2}
+            />
+            <TextInput
+              style={[styles.input, styles.dateSmall]}
+              value={bm}
+              onChangeText={(t) => setBm(digits(t))}
+              placeholder="ММ"
+              placeholderTextColor="#b0b5bc"
+              keyboardType="number-pad"
+              maxLength={2}
+            />
+            <TextInput
+              style={[styles.input, styles.dateYear]}
+              value={by}
+              onChangeText={(t) => setBy(digits(t))}
+              placeholder="ГГГГ"
+              placeholderTextColor="#b0b5bc"
+              keyboardType="number-pad"
+              maxLength={4}
+            />
+          </View>
+          <Text style={styles.hint}>Оставьте пустым, если не хотите показывать</Text>
+        </View>
+
+        {/* о себе */}
+        <View style={styles.card}>
+          <Text style={styles.label}>О себе</Text>
+          <TextInput
+            style={[styles.input, styles.bioInput]}
+            value={bio}
+            onChangeText={setBio}
+            placeholder="Расскажите о себе"
+            placeholderTextColor="#b0b5bc"
+            maxLength={200}
+            multiline
+          />
+          <Text style={styles.counter}>{bio.length}/200</Text>
+        </View>
+
+        {/* кнопка сохранить */}
+        <View style={styles.buttons}>
+          <Pressable
+            style={({ pressed }) => [styles.btn, styles.btnLight, pressed && styles.pressed]}
+            onPress={() => router.back()}
+            disabled={saving}
+          >
+            <Text style={styles.btnLightText}>Отмена</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.btn, styles.btnBlue, pressed && styles.pressed]}
+            onPress={save}
+            disabled={saving}
+          >
+            {saving ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.btnBlueText}>Сохранить</Text>
+            )}
+          </Pressable>
+        </View>
       </ScrollView>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#fff' },
-  content: { padding: 20, paddingBottom: 60 },
-  headerSave: { fontSize: 16, fontWeight: '700', color: '#2563eb' },
+  screen: { flex: 1, backgroundColor: '#f2f4f9' },
 
-  avatarWrap: { alignItems: 'center', marginBottom: 24 },
-  avatarBox: { width: 96, height: 96 },
+  header: {
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  back: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backText: { fontSize: 28, lineHeight: 30, color: '#111', marginTop: -2 },
+  title: { flex: 1, fontSize: 28, fontWeight: '800', color: '#111' },
+
+  card: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderRadius: 24,
+    backgroundColor: '#fff',
+  },
+
+  avatarCard: { alignItems: 'center', marginTop: 4, paddingVertical: 20 },
+  avatarBox: { width: 92, height: 92 },
   avatarOverlay: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    borderRadius: 48,
+    borderRadius: 46,
     backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   cameraIcon: { width: 28, height: 28, tintColor: '#fff' },
-  changePhoto: { color: '#2563eb', fontSize: 15, fontWeight: '600', marginTop: 12 },
+  avatarHint: { fontSize: 13, color: '#5f6368', marginTop: 12 },
 
-  // Серые блоки со строками, как в профиле и при регистрации
-  card: { backgroundColor: '#f2f4f7', borderRadius: 14, marginBottom: 10, overflow: 'hidden' },
-  row: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, minHeight: 52 },
-  rowLabel: { width: 112, fontSize: 16, color: '#111', fontWeight: '500' },
-  line: { height: StyleSheet.hairlineWidth, backgroundColor: '#d9dde3', marginLeft: 16 },
-  input: { flex: 1, fontSize: 16, color: '#111', paddingVertical: 14 },
-  at: { fontSize: 16, color: '#8a8f98', marginRight: 2 },
+  label: { fontSize: 13, color: '#5f6368', marginBottom: 2 },
+  input: {
+    fontSize: 17,
+    color: '#111',
+    paddingVertical: 8,
+    paddingHorizontal: 0,
+  },
+  nickRow: { flexDirection: 'row', alignItems: 'center' },
+  at: { fontSize: 17, color: '#5f6368', marginRight: 2 },
   nickInput: { flex: 1 },
-  hint: { fontSize: 13, color: '#8a8f98', marginBottom: 18, marginHorizontal: 6 },
+  dateRow: { flexDirection: 'row', gap: 16 },
+  dateSmall: { width: 56, textAlign: 'center' },
+  dateYear: { width: 90, textAlign: 'center' },
+  bioInput: { minHeight: 70, textAlignVertical: 'top' },
+  hint: { fontSize: 12, color: '#5f6368', marginTop: 4 },
+  counter: { fontSize: 12, color: '#5f6368', textAlign: 'right', marginTop: 4 },
 
-  dateRow: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  dateSmall: { flex: 0, width: 40, textAlign: 'center' },
-  dateYear: { flex: 0, width: 64, textAlign: 'center' },
-  dateDot: { color: '#9aa0a6', fontSize: 16, marginHorizontal: 4 },
-
-  bioBox: { paddingHorizontal: 16, paddingVertical: 12 },
-  bioLabel: { fontSize: 13, color: '#8a8f98', marginBottom: 4 },
-  bioInput: { fontSize: 16, color: '#111', minHeight: 70, textAlignVertical: 'top', paddingVertical: 4 },
-  counter: { fontSize: 12, color: '#8a8f98', textAlign: 'right', marginTop: 4 },
-
-  button: {
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#2563eb',
+  buttons: { flexDirection: 'row', gap: 10, marginHorizontal: 16, marginTop: 16 },
+  btn: {
+    flex: 1,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 16,
   },
-  buttonPressed: { opacity: 0.75 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  btnLight: { backgroundColor: '#fff' },
+  btnLightText: { color: '#111', fontSize: 15, fontWeight: '700' },
+  btnBlue: { backgroundColor: '#2563eb' },
+  btnBlueText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  pressed: { opacity: 0.75 },
 });
