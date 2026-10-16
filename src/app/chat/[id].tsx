@@ -1087,8 +1087,7 @@ const styles = StyleSheet.create({
     minHeight: 46,
     paddingLeft: 16,
     paddingRight: 4,
-    borderWidth: 1,
-    borderColor: '#d5d9de',
+    
   },
   inputText: {
     flex: 1,
@@ -1107,8 +1106,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: '#d5d9de',
+    
+    
   },
   roundBtnRec: { backgroundColor: '#e53935' },
 
@@ -1124,7 +1123,7 @@ const styles = StyleSheet.create({
     height: 24,
     backgroundColor: '#d5d9de',
   },
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: '#e9ecf1' },
   list: { padding: 12 },
   row: { flexDirection: 'row', marginVertical: 4 },
   rowGroupEnd: { marginBottom: 12 },
@@ -1260,9 +1259,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     padding: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: '#ccc',
-    backgroundColor: '#fff',
+    
+    
+    backgroundColor: '#ffffff',
   },
   input: {
     flex: 1,

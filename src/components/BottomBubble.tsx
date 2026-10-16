@@ -19,7 +19,7 @@ export default function BottomBubble({ active }: { active: Tab }) {
   return (
     <View
       pointerEvents="box-none"
-      style={[styles.wrap, { bottom: Math.max(insets.bottom, 10) + 6 }]}
+      style={[styles.wrap, { bottom: Math.max(insets.bottom, 10) + 18 }]}
     >
       <View style={styles.bubble}>
         {TABS.map((t) => {
@@ -56,17 +56,12 @@ export default function BottomBubble({ active }: { active: Tab }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { position: 'absolute', left: 28, right: 28 },
+  wrap: { position: 'absolute', left: 40, right: 40 },
   bubble: {
     flexDirection: 'row',
     backgroundColor: '#fff',
     borderRadius: 28,
     padding: 4,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
   },
   item: {
     flex: 1,
